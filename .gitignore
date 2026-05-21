@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+mysql_data/
+kafka_data/
+*.log

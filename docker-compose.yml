@@ -1,0 +1,71 @@
+services:
+  watchman_mysql:
+    container_name: watchman_mysql
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${MYSQL_PORT}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./config/db_init.sql:/docker-entrypoint-initdb.d/db_init.sql
+    command: --binlog-format=ROW --binlog-row-image=FULL --server-id=1 --log-bin=mysql-bin
+    networks:
+      - agent_network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: watchman_kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9092'
+      CLUSTER_ID: 'MkU3OEVBNTcwNTJENDM2Qk'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'   # ✅ use the image's pre-owned directory
+    volumes:
+      - kafka_data:/var/lib/kafka/data        # ✅ mount here instead of /tmp
+    networks:
+      - agent_network
+    depends_on:
+      - watchman_mysql
+
+  debezium:
+    image: debezium/connect:2.4
+    container_name: watchman_debezium
+    restart: always
+    ports:
+      - "8083:8083"
+    environment:
+      BOOTSTRAP_SERVERS: kafka:29092
+      GROUP_ID: 1
+      CONFIG_STORAGE_TOPIC: my_connect_configs
+      OFFSET_STORAGE_TOPIC: my_connect_offsets
+      STATUS_STORAGE_TOPIC: my_connect_statuses
+    depends_on:
+      - watchman_mysql
+      - kafka
+    networks:
+      - agent_network
+
+volumes:
+  mysql_data:
+  kafka_data:   # ✅ NEW
+
+networks:
+  agent_network:
+    name: agent_network
+    driver: bridge

@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS customers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    phone VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO customers (name, phone) VALUES ('Rahul Sharma', '+91-9876543210'), ('Jane Doe', '+1-5551234567');
