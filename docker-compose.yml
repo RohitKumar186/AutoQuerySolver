@@ -60,6 +60,19 @@ services:
       - kafka
     networks:
       - agent_network
+  
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: watchman_kafka_ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    networks:
+      - agent_network
+    depends_on:
+      - kafka
 
 volumes:
   mysql_data:
@@ -69,3 +82,5 @@ networks:
   agent_network:
     name: agent_network
     driver: bridge
+
+  
