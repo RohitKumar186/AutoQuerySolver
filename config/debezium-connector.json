@@ -1,0 +1,16 @@
+{
+  "name": "watchman-mysql-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+    "tasks.max": "1",
+    "database.hostname": "watchman_mysql",
+    "database.port": "3306",
+    "database.user": "root",
+    "database.password": "super_secure_root_pass_2026",
+    "database.server.id": "1",
+    "topic.prefix": "dbserver1",
+    "database.include.list": "autoquery_db",
+    "schema.history.internal.kafka.bootstrap.servers": "kafka:29092",
+    "schema.history.internal.kafka.topic": "schema-changes.autoquery_db"
+  }
+}

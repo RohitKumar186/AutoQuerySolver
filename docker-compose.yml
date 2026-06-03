@@ -74,6 +74,28 @@ services:
     depends_on:
       - kafka
 
+  # ─────────────────────────────────────────────────────────────────────────────
+# ADD this service block inside your existing docker-compose.yml
+# under the `services:` key, alongside the other services.
+# ─────────────────────────────────────────────────────────────────────────────
+
+  inspector_agent:
+    build:
+      context: ./worker2
+      dockerfile: Dockerfile
+    container_name: watchman_inspector
+    restart: always
+    environment:
+      KAFKA_BROKER: kafka:29092
+      KAFKA_TOPIC: dbserver1.autoquery_db.customers
+      KAFKA_GROUP: inspector-group
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+    depends_on:
+      - kafka
+      - debezium
+    networks:
+      - agent_network 
+
 volumes:
   mysql_data:
   kafka_data:   # ✅ NEW

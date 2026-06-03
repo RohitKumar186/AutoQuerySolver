@@ -1,0 +1,13 @@
+# Worker 2 — The Inspector
+kafka-python==2.0.2
+python-dotenv==1.0.1
+httpx==0.27.0
+
+# Rule-based
+pandera==0.20.4
+pandas==2.2.2
+
+# Duplicate detection
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.25.1      # speeds up fuzzywuzzy
+metaphone==0.6
