@@ -20,12 +20,11 @@ log = logging.getLogger("RuleBasedChecker")
 PATTERNS = {
     "email":  re.compile(r"^[\w\.\+\-]+@[\w\-]+\.[a-zA-Z]{2,}$"),
     "phone":  re.compile(r"^\+?[\d\s\-\(\)]{7,15}$"),
-    "date":   re.compile(r"^\d{4}-\d{2}-\d{2}$"),          # YYYY-MM-DD
+    "date":   re.compile(r"^\d{4}-\d{2}-\d{2}(T[\d:]+Z?)?$"),   # YYYY-MM-DD or ISO
     "name":   re.compile(r"^[A-Za-z\s\.\-']{2,100}$"),
 }
 
 # ── Field → expected type / pattern mapping ────────────────────────────────────
-# Extend this to match YOUR table's columns.
 FIELD_RULES = {
     "email":      ("pattern", "email"),
     "phone":      ("pattern", "phone"),
@@ -38,13 +37,16 @@ FIELD_RULES = {
     "score":      ("type",    (int, float)),
 }
 
-# ── Optional Pandera schema ────────────────────────────────────────────────────
+# ── Pandera schema — matches actual customers table columns ────────────────────
 if PANDERA_AVAILABLE:
     PANDERA_SCHEMA = DataFrameSchema(
         {
-            "email": Column(str, nullable=True, checks=Check.str_matches(PATTERNS["email"])),
-            "age":   Column(float, nullable=True, checks=Check.in_range(0, 150)),
+            "id":         Column(object, nullable=True),   # int or None on insert
+            "name":       Column(str, nullable=False, checks=Check.str_length(2, 255)),
+            "phone":      Column(str, nullable=True),
+            "created_at": Column(object, nullable=True),   # timestamp string
         },
+        strict=False,   # ignore any extra columns
         coerce=True,
     )
 
@@ -88,6 +90,6 @@ class RuleBasedChecker:
                         f"failure_case='{row['failure_case']}'"
                     )
             except Exception:
-                pass   # Column not present in this record — skip silently
+                pass
 
         return issues

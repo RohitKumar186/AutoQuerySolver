@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watchman Inspector</title>
+<style>
+  :root {
+    --bg: #0d0f12;
+    --surface: #141720;
+    --surface2: #1c2030;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.13);
+    --text: #e2e4ec;
+    --muted: #6b7280;
+    --accent: #5b8ef5;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --purple: #a78bfa;
+    --cyan: #22d3ee;
+    --font: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 13px;
+  }
+
+  /* ── Top bar ── */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .logo {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--accent);
+  }
+  .logo span { color: var(--text); }
+  .dot-live {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px var(--green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+  .stat-pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border2);
+    color: var(--muted);
+  }
+  .stat-pill b { color: var(--text); }
+  #clear-btn {
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border2);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: all .15s;
+  }
+  #clear-btn:hover { background: var(--surface2); color: var(--text); }
+
+  /* ── Layout ── */
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    height: calc(100vh - 52px);
+  }
+
+  /* ── Sidebar ── */
+  aside {
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .aside-section {
+    padding: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .aside-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  .metric-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .metric-row:last-child { margin-bottom: 0; }
+  .metric-label { color: var(--muted); font-size: 12px; }
+  .metric-val { font-size: 18px; font-weight: 700; }
+  .metric-val.green { color: var(--green); }
+  .metric-val.red { color: var(--red); }
+  .metric-val.amber { color: var(--amber); }
+  .metric-val.blue { color: var(--accent); }
+
+  /* bar chart */
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+  .bar-row:last-child { margin-bottom: 0; }
+  .bar-label { width: 80px; font-size: 11px; color: var(--muted); flex-shrink: 0; text-align: right; }
+  .bar-track { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; transition: width .4s ease; }
+  .bar-count { font-size: 11px; color: var(--muted); min-width: 24px; text-align: right; }
+
+  /* filters */
+  .filter-group { display: flex; flex-direction: column; gap: 6px; }
+  .filter-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--muted);
+    font-family: var(--font);
+    font-size: 12px;
+    cursor: pointer;
+    text-align: left;
+    transition: all .15s;
+  }
+  .filter-btn:hover { background: var(--surface2); color: var(--text); }
+  .filter-btn.active { background: var(--surface2); border-color: var(--border2); color: var(--text); }
+  .filter-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .filter-count { margin-left: auto; font-size: 11px; background: var(--border); padding: 1px 6px; border-radius: 10px; }
+
+  /* topic pill */
+  .topic-tag {
+    padding: 5px 10px;
+    border-radius: 6px;
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    font-size: 11px;
+    color: var(--cyan);
+    word-break: break-all;
+  }
+
+  /* ── Feed ── */
+  main {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .feed-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .feed-header input {
+    font-family: var(--font);
+    font-size: 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 5px 10px;
+    outline: none;
+    width: 220px;
+    transition: border .15s;
+  }
+  .feed-header input:focus { border-color: var(--accent); }
+  .feed-header input::placeholder { color: var(--muted); }
+  .sort-select {
+    font-family: var(--font);
+    font-size: 11px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    padding: 5px 8px;
+    outline: none;
+    cursor: pointer;
+    margin-left: auto;
+  }
+
+  /* feed list */
+  #event-feed {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border2) transparent;
+  }
+  #event-feed::-webkit-scrollbar { width: 6px; }
+  #event-feed::-webkit-scrollbar-track { background: transparent; }
+  #event-feed::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+  /* empty state */
+  #empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 10px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  #empty-state .big { font-size: 32px; }
+
+  /* event card */
+  .event-card {
+    display: grid;
+    grid-template-columns: 3px 1fr;
+    border-bottom: 1px solid var(--border);
+    transition: background .1s;
+    cursor: pointer;
+    animation: slideIn .2s ease;
+  }
+  @keyframes slideIn { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:none; } }
+  .event-card:hover { background: var(--surface2); }
+  .event-card.expanded { background: var(--surface2); }
+  .event-bar { }
+  .event-bar.clean  { background: var(--green); }
+  .event-bar.anomaly { background: var(--red); }
+  .event-bar.ai     { background: var(--purple); }
+  .event-bar.dup    { background: var(--amber); }
+
+  .event-inner { padding: 12px 16px; }
+  .event-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .op-badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: .5px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+  .op-c { background: rgba(34,197,94,.15); color: var(--green); }
+  .op-u { background: rgba(245,158,11,.15); color: var(--amber); }
+  .op-d { background: rgba(239,68,68,.15); color: var(--red); }
+  .op-r { background: rgba(91,142,245,.15); color: var(--accent); }
+
+  .event-name { font-weight: 600; font-size: 13px; color: var(--text); }
+  .event-time { margin-left: auto; font-size: 11px; color: var(--muted); flex-shrink: 0; }
+
+  .event-row2 {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .issue-chip {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .chip-rule { background: rgba(239,68,68,.12); color: #f87171; border: 1px solid rgba(239,68,68,.2); }
+  .chip-dup  { background: rgba(245,158,11,.12); color: #fbbf24; border: 1px solid rgba(245,158,11,.2); }
+  .chip-ai   { background: rgba(167,139,250,.12); color: var(--purple); border: 1px solid rgba(167,139,250,.2); }
+  .chip-clean { background: rgba(34,197,94,.1); color: #4ade80; border: 1px solid rgba(34,197,94,.2); }
+  .chip-skipped { background: rgba(107,114,128,.12); color: var(--muted); border: 1px solid rgba(107,114,128,.2); }
+
+  /* expanded detail */
+  .event-detail {
+    padding: 0 16px 14px 16px;
+    display: none;
+  }
+  .event-card.expanded .event-detail { display: block; }
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .detail-block {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .detail-block-label { font-size: 10px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+  .detail-kv { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px; }
+  .detail-kv:last-child { margin-bottom: 0; }
+  .detail-key { color: var(--muted); }
+  .detail-v   { color: var(--text); }
+  .detail-v.err { color: var(--red); }
+  .detail-v.ok  { color: var(--green); }
+
+  .issues-list { margin-top: 8px; }
+  .issue-item {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 6px;
+    font-size: 11px;
+    color: var(--text);
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .issue-item:last-child { margin-bottom: 0; }
+  .issue-icon { flex-shrink: 0; margin-top: 1px; }
+
+  /* connection bar */
+  .conn-bar {
+    padding: 6px 20px;
+    font-size: 11px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+  .conn-dot.err { background: var(--red); }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<header>
+  <div class="logo">watch<span>man</span></div>
+  <div class="dot-live" id="live-dot" title="Live"></div>
+  <span style="font-size:11px;color:var(--muted)">Inspector</span>
+  <div class="header-right">
+    <div class="stat-pill">Events: <b id="h-total">0</b></div>
+    <div class="stat-pill">Anomalies: <b id="h-anom" style="color:var(--red)">0</b></div>
+    <div class="stat-pill">Clean: <b id="h-clean" style="color:var(--green)">0</b></div>
+    <button id="clear-btn" onclick="clearFeed()">Clear</button>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- Sidebar -->
+  <aside>
+    <!-- Counters -->
+    <div class="aside-section">
+      <div class="aside-label">Overview</div>
+      <div class="metric-row"><span class="metric-label">Total events</span><span class="metric-val blue" id="s-total">0</span></div>
+      <div class="metric-row"><span class="metric-label">Clean</span><span class="metric-val green" id="s-clean">0</span></div>
+      <div class="metric-row"><span class="metric-label">Anomalies</span><span class="metric-val red" id="s-anom">0</span></div>
+      <div class="metric-row"><span class="metric-label">AI flagged</span><span class="metric-val" style="color:var(--purple)" id="s-ai">0</span></div>
+    </div>
+
+    <!-- Issue breakdown -->
+    <div class="aside-section">
+      <div class="aside-label">Issue types</div>
+      <div id="breakdown">
+        <div class="bar-row"><span class="bar-label">FORMAT</span><div class="bar-track"><div class="bar-fill" id="bar-fmt" style="width:0;background:var(--red)"></div></div><span class="bar-count" id="cnt-fmt">0</span></div>
+        <div class="bar-row"><span class="bar-label">PANDERA</span><div class="bar-track"><div class="bar-fill" id="bar-pan" style="width:0;background:var(--amber)"></div></div><span class="bar-count" id="cnt-pan">0</span></div>
+        <div class="bar-row"><span class="bar-label">DUPLICATE</span><div class="bar-track"><div class="bar-fill" id="bar-dup" style="width:0;background:var(--amber)"></div></div><span class="bar-count" id="cnt-dup">0</span></div>
+        <div class="bar-row"><span class="bar-label">AI</span><div class="bar-track"><div class="bar-fill" id="bar-ai" style="width:0;background:var(--purple)"></div></div><span class="bar-count" id="cnt-ai">0</span></div>
+      </div>
+    </div>
+
+    <!-- Filter -->
+    <div class="aside-section" style="flex:1;overflow-y:auto">
+      <div class="aside-label">Filter</div>
+      <div class="filter-group">
+        <button class="filter-btn active" data-filter="all" onclick="setFilter('all',this)">
+          <span class="filter-dot" style="background:var(--accent)"></span>All events
+          <span class="filter-count" id="f-all">0</span>
+        </button>
+        <button class="filter-btn" data-filter="clean" onclick="setFilter('clean',this)">
+          <span class="filter-dot" style="background:var(--green)"></span>Clean
+          <span class="filter-count" id="f-clean">0</span>
+        </button>
+        <button class="filter-btn" data-filter="anomaly" onclick="setFilter('anomaly',this)">
+          <span class="filter-dot" style="background:var(--red)"></span>Anomalies
+          <span class="filter-count" id="f-anomaly">0</span>
+        </button>
+        <button class="filter-btn" data-filter="ai" onclick="setFilter('ai',this)">
+          <span class="filter-dot" style="background:var(--purple)"></span>AI flagged
+          <span class="filter-count" id="f-ai">0</span>
+        </button>
+        <button class="filter-btn" data-filter="dup" onclick="setFilter('dup',this)">
+          <span class="filter-dot" style="background:var(--amber)"></span>Duplicates
+          <span class="filter-count" id="f-dup">0</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Topic -->
+    <div class="aside-section">
+      <div class="aside-label">Kafka topic</div>
+      <div class="topic-tag" id="topic-display">dbserver1.watchman.customers</div>
+    </div>
+  </aside>
+
+  <!-- Main feed -->
+  <main>
+    <div class="feed-header">
+      <input type="text" id="search-box" placeholder="Search by name, phone, issue…" oninput="renderFeed()">
+      <select class="sort-select" id="sort-select" onchange="renderFeed()">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="anomaly">Anomalies first</option>
+      </select>
+    </div>
+    <div id="event-feed">
+      <div id="empty-state">
+        <span class="big">◈</span>
+        <span>Waiting for CDC events…</span>
+        <span style="font-size:11px">Connect your Kafka consumer endpoint</span>
+      </div>
+    </div>
+    <div class="conn-bar">
+      <div class="conn-dot" id="ws-dot"></div>
+      <span id="ws-status">Ready — connect your backend WebSocket or use demo mode below</span>
+      <button id="clear-btn" onclick="loadDemo()" style="margin-left:auto;font-family:var(--font);font-size:11px;padding:3px 10px;border-radius:5px;border:1px solid var(--border2);background:transparent;color:var(--accent);cursor:pointer">Load demo</button>
+    </div>
+  </main>
+</div>
+
+<script>
+const state = {
+  events: [],
+  filter: 'all',
+  counts: { total:0, clean:0, anom:0, ai:0, fmt:0, pan:0, dup:0 }
+};
+
+/* ─── Ingest an event object ─────────────────────────────── */
+function ingestEvent(ev) {
+  state.events.unshift(ev);
+  state.counts.total++;
+  const hasIssues = ev.issues && ev.issues.length > 0;
+  if (!hasIssues) state.counts.clean++;
+  else            state.counts.anom++;
+  if (ev.ai_checked && ev.ai_issues && ev.ai_issues.length) state.counts.ai++;
+  if (ev.issues) {
+    ev.issues.forEach(i => {
+      if (i.startsWith('[FORMAT]'))  state.counts.fmt++;
+      if (i.startsWith('[PANDERA]')) state.counts.pan++;
+      if (i.startsWith('[DUP]'))     state.counts.dup++;
+      if (i.startsWith('[AI]'))      state.counts.ai++;
+    });
+  }
+  updateCounters();
+  renderFeed();
+}
+
+/* ─── Update sidebar counters ────────────────────────────── */
+function updateCounters() {
+  const c = state.counts;
+  const t = c.total || 1;
+  document.getElementById('h-total').textContent = c.total;
+  document.getElementById('h-anom').textContent  = c.anom;
+  document.getElementById('h-clean').textContent = c.clean;
+  document.getElementById('s-total').textContent = c.total;
+  document.getElementById('s-clean').textContent = c.clean;
+  document.getElementById('s-anom').textContent  = c.anom;
+  document.getElementById('s-ai').textContent    = c.ai;
+
+  const fmtPct = Math.round(c.fmt / t * 100);
+  const panPct = Math.round(c.pan / t * 100);
+  const dupPct = Math.round(c.dup / t * 100);
+  const aiPct  = Math.round(c.ai  / t * 100);
+  document.getElementById('bar-fmt').style.width = fmtPct + '%';
+  document.getElementById('bar-pan').style.width = panPct + '%';
+  document.getElementById('bar-dup').style.width = dupPct + '%';
+  document.getElementById('bar-ai').style.width  = aiPct  + '%';
+  document.getElementById('cnt-fmt').textContent = c.fmt;
+  document.getElementById('cnt-pan').textContent = c.pan;
+  document.getElementById('cnt-dup').textContent = c.dup;
+  document.getElementById('cnt-ai').textContent  = c.ai;
+
+  document.getElementById('f-all').textContent    = c.total;
+  document.getElementById('f-clean').textContent  = c.clean;
+  document.getElementById('f-anomaly').textContent= c.anom;
+  document.getElementById('f-ai').textContent     = c.ai;
+  document.getElementById('f-dup').textContent    = c.dup;
+}
+
+/* ─── Filter & sort & search ─────────────────────────────── */
+function setFilter(f, btn) {
+  state.filter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderFeed();
+}
+
+function matchFilter(ev) {
+  const hasIssues = ev.issues && ev.issues.length > 0;
+  if (state.filter === 'clean')   return !hasIssues;
+  if (state.filter === 'anomaly') return hasIssues;
+  if (state.filter === 'ai')      return ev.ai_issues && ev.ai_issues.length > 0;
+  if (state.filter === 'dup')     return ev.issues && ev.issues.some(i => i.startsWith('[DUP]'));
+  return true;
+}
+
+/* ─── Render feed ────────────────────────────────────────── */
+function renderFeed() {
+  const feed = document.getElementById('event-feed');
+  const empty = document.getElementById('empty-state');
+  const q = document.getElementById('search-box').value.toLowerCase();
+  const sort = document.getElementById('sort-select').value;
+
+  let evs = state.events.filter(ev => {
+    if (!matchFilter(ev)) return false;
+    if (!q) return true;
+    const hay = JSON.stringify(ev).toLowerCase();
+    return hay.includes(q);
+  });
+
+  if (sort === 'oldest') evs = [...evs].reverse();
+  if (sort === 'anomaly') evs = [...evs].sort((a,b) => (b.issues?.length||0) - (a.issues?.length||0));
+
+  if (evs.length === 0) {
+    feed.innerHTML = '';
+    if (state.events.length === 0) {
+      feed.appendChild(buildEmpty('◈','Waiting for CDC events…','Connect your Kafka consumer endpoint'));
+    } else {
+      feed.appendChild(buildEmpty('○','No matching events','Try a different filter or search'));
+    }
+    return;
+  }
+
+  feed.innerHTML = '';
+  evs.forEach((ev, i) => {
+    feed.appendChild(buildCard(ev, i));
+  });
+}
+
+function buildEmpty(icon, line1, line2) {
+  const d = document.createElement('div');
+  d.id = 'empty-state';
+  d.innerHTML = `<span class="big">${icon}</span><span>${line1}</span><span style="font-size:11px">${line2}</span>`;
+  return d;
+}
+
+/* ─── Build event card ───────────────────────────────────── */
+function buildCard(ev, idx) {
+  const hasIssues = ev.issues && ev.issues.length > 0;
+  const isAi      = ev.ai_issues && ev.ai_issues.length > 0;
+  const isDup     = ev.issues && ev.issues.some(i => i.startsWith('[DUP]'));
+  const barClass  = !hasIssues ? 'clean' : isAi ? 'ai' : isDup ? 'dup' : 'anomaly';
+  const opClass   = { c:'op-c', u:'op-u', d:'op-d', r:'op-r' }[ev.op] || 'op-r';
+  const opLabel   = { c:'INSERT', u:'UPDATE', d:'DELETE', r:'READ' }[ev.op] || ev.op?.toUpperCase();
+
+  const card = document.createElement('div');
+  card.className = 'event-card';
+  card.onclick   = () => card.classList.toggle('expanded');
+
+  /* chips */
+  let chips = '';
+  if (!hasIssues) {
+    chips = `<span class="issue-chip chip-clean">✓ clean</span>`;
+    if (ev.ai_checked) chips += `<span class="issue-chip chip-skipped">AI ✓</span>`;
+  } else {
+    const fmtN = ev.issues.filter(i=>i.startsWith('[FORMAT]')).length;
+    const panN = ev.issues.filter(i=>i.startsWith('[PANDERA]')).length;
+    const dupN = ev.issues.filter(i=>i.startsWith('[DUP]')).length;
+    const aiN  = ev.issues.filter(i=>i.startsWith('[AI]')).length;
+    if (fmtN) chips += `<span class="issue-chip chip-rule">FORMAT ×${fmtN}</span>`;
+    if (panN) chips += `<span class="issue-chip chip-rule">PANDERA ×${panN}</span>`;
+    if (dupN) chips += `<span class="issue-chip chip-dup">DUP ×${dupN}</span>`;
+    if (aiN)  chips += `<span class="issue-chip chip-ai">AI ×${aiN}</span>`;
+    if (!ev.ai_checked) chips += `<span class="issue-chip chip-skipped">AI skipped</span>`;
+  }
+
+  /* record fields */
+  const rec = ev.record || {};
+  const kvRows = Object.entries(rec).map(([k,v]) => `
+    <div class="detail-kv">
+      <span class="detail-key">${k}</span>
+      <span class="detail-v">${v ?? '<null>'}</span>
+    </div>`).join('');
+
+  /* issues list */
+  const issueRows = (ev.issues || []).map(i => {
+    const icon = i.startsWith('[AI]') ? '🤖' : i.startsWith('[DUP]') ? '🔁' : '⚠';
+    return `<div class="issue-item"><span class="issue-icon">${icon}</span><span>${i}</span></div>`;
+  }).join('');
+
+  const aiStatus = ev.ai_checked
+    ? (ev.ai_issues && ev.ai_issues.length ? `<span style="color:var(--purple)">flagged ${ev.ai_issues.length}</span>` : `<span style="color:var(--green)">passed</span>`)
+    : `<span style="color:var(--muted)">skipped (basic checks failed)</span>`;
+
+  card.innerHTML = `
+    <div class="event-bar ${barClass}"></div>
+    <div>
+      <div class="event-inner">
+        <div class="event-top">
+          <span class="op-badge ${opClass}">${opLabel}</span>
+          <span class="event-name">${escHtml(rec.name || rec.id || 'record #' + (ev.seq||idx))}</span>
+          <span class="event-time">${ev.ts || ''}</span>
+        </div>
+        <div class="event-row2">${chips}</div>
+      </div>
+      <div class="event-detail">
+        <div class="detail-grid">
+          <div class="detail-block">
+            <div class="detail-block-label">Record fields</div>
+            ${kvRows || '<span style="color:var(--muted);font-size:11px">no fields</span>'}
+          </div>
+          <div class="detail-block">
+            <div class="detail-block-label">Check results</div>
+            <div class="detail-kv"><span class="detail-key">Rule checks</span><span class="detail-v ${!ev.issues?.filter(i=>!i.startsWith('[DUP]')&&!i.startsWith('[AI]')).length?'ok':'err'}">${ev.issues?.filter(i=>!i.startsWith('[DUP]')&&!i.startsWith('[AI]')).length || 0} issue(s)</span></div>
+            <div class="detail-kv"><span class="detail-key">Duplicate</span><span class="detail-v ${isDup?'err':'ok'}">${isDup ? 'flagged' : 'clear'}</span></div>
+            <div class="detail-kv"><span class="detail-key">AI checker</span>${aiStatus}</div>
+            <div class="detail-kv"><span class="detail-key">Total issues</span><span class="detail-v ${hasIssues?'err':'ok'}">${ev.issues?.length || 0}</span></div>
+          </div>
+        </div>
+        ${issueRows ? `<div class="aside-label" style="margin-bottom:6px">Issues</div><div class="issues-list">${issueRows}</div>` : ''}
+      </div>
+    </div>`;
+
+  return card;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+/* ─── Clear feed ─────────────────────────────────────────── */
+function clearFeed() {
+  state.events = [];
+  state.counts = { total:0, clean:0, anom:0, ai:0, fmt:0, pan:0, dup:0 };
+  updateCounters();
+  renderFeed();
+}
+
+/* ─── WebSocket connection (backend) ────────────────────── */
+/* 
+  Your Python inspector should emit JSON like:
+  {
+    "op": "c",
+    "record": { "id":3, "name":"Rahul", "phone":"+91-9876543210", "created_at":"..." },
+    "issues": ["[FORMAT] phone does not match pattern"],
+    "ai_checked": false,
+    "ai_issues": [],
+    "ts": "18:28:14"
+  }
+*/
+let ws = null;
+function connectWS(url) {
+  ws = new WebSocket(url);
+  ws.onopen = () => {
+    document.getElementById('ws-status').textContent = 'Connected to ' + url;
+    document.getElementById('ws-dot').classList.remove('err');
+  };
+  ws.onmessage = e => {
+    try { ingestEvent(JSON.parse(e.data)); } catch(_) {}
+  };
+  ws.onclose = () => {
+    document.getElementById('ws-status').textContent = 'Disconnected — retrying…';
+    document.getElementById('ws-dot').classList.add('err');
+    setTimeout(() => connectWS(url), 3000);
+  };
+  ws.onerror = () => {
+    document.getElementById('ws-dot').classList.add('err');
+  };
+}
+
+/* Call this from browser console to connect:
+   connectWS('ws://localhost:8765')
+*/
+
+/* ─── Demo data ──────────────────────────────────────────── */
+function loadDemo() {
+  clearFeed();
+  const demo = [
+    { op:'c', record:{ id:1, name:'Rahul Sharma', phone:'+91-9876543210', created_at:'2026-06-03T18:28:10Z' }, issues:[], ai_checked:true, ai_issues:[], ts:'18:28:10', seq:1 },
+    { op:'c', record:{ id:2, name:'Jane Doe', phone:'+1-5551234567', created_at:'2026-06-03T18:28:11Z' }, issues:[], ai_checked:true, ai_issues:[], ts:'18:28:11', seq:2 },
+    { op:'c', record:{ id:3, name:'B@d Us3r!', phone:'not-a-phone', created_at:'2026-06-03T18:28:14Z' }, issues:['[FORMAT] name value "B@d Us3r!" does not match name pattern','[FORMAT] phone value "not-a-phone" does not match phone pattern','[PANDERA] column=None check=column_in_dataframe failure_case="email"','[PANDERA] column=None check=column_in_dataframe failure_case="age"'], ai_checked:false, ai_issues:[], ts:'18:28:14', seq:3 },
+    { op:'u', record:{ id:2, name:'Jane Doe', phone:'+1-5551234567', created_at:'2026-06-03T18:28:20Z' }, issues:[], ai_checked:true, ai_issues:[], ts:'18:28:20', seq:4 },
+    { op:'c', record:{ id:4, name:'Rahul Sharma', phone:'+91-9876543210', created_at:'2026-06-03T18:28:25Z' }, issues:['[DUP] FuzzyWuzzy match 97% with existing record id=1'], ai_checked:false, ai_issues:[], ts:'18:28:25', seq:5 },
+    { op:'c', record:{ id:5, name:'Alice Wonderland', phone:'+44-7700-900123', created_at:'2026-06-03T18:28:30Z' }, issues:[], ai_checked:true, ai_issues:['[AI] Suspicious pattern: name appears fictional'], ts:'18:28:30', seq:6 },
+    { op:'d', record:{ id:3, name:'B@d Us3r!', phone:'not-a-phone', created_at:'2026-06-03T18:28:35Z' }, issues:[], ai_checked:true, ai_issues:[], ts:'18:28:35', seq:7 },
+  ];
+  demo.forEach((ev, i) => {
+    setTimeout(() => ingestEvent(ev), i * 180);
+  });
+}
+</script>
+</body>
+</html>

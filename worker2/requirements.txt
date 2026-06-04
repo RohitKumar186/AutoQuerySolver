@@ -3,11 +3,14 @@ kafka-python==2.0.2
 python-dotenv==1.0.1
 httpx==0.27.0
 
+# WebSocket server (dashboard)
+websockets==12.0
+
 # Rule-based
 pandera==0.20.4
 pandas==2.2.2
 
 # Duplicate detection
 fuzzywuzzy==0.18.0
-python-Levenshtein==0.25.1      # speeds up fuzzywuzzy
+python-Levenshtein==0.25.1
 metaphone==0.6

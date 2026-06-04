@@ -85,6 +85,8 @@ services:
       dockerfile: Dockerfile
     container_name: watchman_inspector
     restart: always
+    ports:
+    - "8765:8765"
     environment:
       KAFKA_BROKER: kafka:29092
       KAFKA_TOPIC: dbserver1.autoquery_db.customers
@@ -95,7 +97,15 @@ services:
       - debezium
     networks:
       - agent_network 
-
+  dashboard:                          # ← add from here
+    image: nginx:alpine
+    container_name: watchman_dashboard
+    ports:
+      - "5500:80"
+    volumes:
+      - ./worker2/dashboard.html:/usr/share/nginx/html/index.html
+    networks:
+      - agent_network
 volumes:
   mysql_data:
   kafka_data:   # ✅ NEW
