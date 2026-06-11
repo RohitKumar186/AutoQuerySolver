@@ -1,53 +1,20 @@
 # 🔍 AutoQuery Solver Agent
 
-> A real-time database monitoring and AI-powered anomaly detection system built on Change Data Capture (CDC) architecture.
+> A real-time database monitoring and AI-powered auto-correction system built on Change Data Capture (CDC) architecture.
 
 ---
 
-## 🚀 Overview
+## 🚀 What Is This Project?
 
-AutoQuery Solver Agent monitors MySQL database activity in real time, capturing every INSERT, UPDATE, and DELETE operation using Debezium CDC and streaming them through Apache Kafka. Each stage of the pipeline is handled by an independent worker — from raw change capture and intelligent 3-layer inspection, through AI-powered correction, human validation, safe execution, and full audit logging.
+AutoQuery Solver Agent watches your MySQL database 24/7. Every time someone inserts, updates, or deletes a row — the system catches it instantly, checks if the data is valid, and if something is wrong, an AI agent figures out the best fix and corrects it automatically.
 
----
-
-## 📌 What This Project Does
-
-- Monitors MySQL databases continuously in real time
-- Captures all database changes automatically via CDC (no polling)
-- Streams events to Kafka topics for scalable downstream processing
-- Validates every incoming record with rule-based and AI checks
-- Detects near-duplicate and phonetically similar records
-- Uses Google Gemini to flag typos, inconsistencies, and suspicious values
-- Visualises anomaly results on a live dashboard
-- AI suggests the best fix using past experience (memory/vector store)
-- Human approval gate before any fix is applied to the database
-- Safely writes corrections with rollback/savepoint protection
-- Logs every fix permanently and feeds it back as memory for future corrections
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Database | MySQL 8.0 |
-| CDC Connector | Debezium 2.4 |
-| Event Streaming | Apache Kafka (Confluent 7.5.0, KRaft mode) |
-| Stream Browser | Kafka UI (Provectus) |
-| Schema Validation | Pandera, Pydantic, JSON Schema |
-| Duplicate Detection | FuzzyWuzzy / RapidFuzz + Double Metaphone |
-| AI Inspection & Fix | Claude API (Sonnet), Google Gemini API |
-| Agent Framework | LangGraph / CrewAI |
-| Memory / Vector Store | pgvector (Postgres), Pinecone, OpenAI / Claude Embeddings |
-| Human Approval UI | FastAPI + React |
-| Queue | Redis |
-| Database Writing | SQLAlchemy / psycopg2 |
-| Rollback | SQL Transactions + SAVEPOINT, pg_dump / mysqldump, Flyway / Liquibase |
-| Audit Logging | PostgreSQL audit table, Python logging, ELK Stack |
-| Dashboard | Streamlit (Worker 2), Grafana / Metabase (Worker 6) |
-| Notifications | Slack API / Email (SMTP) |
-| Containerization | Docker & Docker Compose |
-| Version Control | Git & GitHub |
+The system is built as a pipeline of independent workers, each doing one job:
+- **Worker 1** captures every database change in real time
+- **Worker 2** inspects each record for errors using rules + AI
+- **Worker 3** fixes the errors intelligently using Groq AI and past experience
+- **Worker 4** *(coming)* asks a human to approve sensitive fixes
+- **Worker 5** *(coming)* safely writes the approved fix back to the database
+- **Worker 6** *(coming)* logs everything forever and makes the system smarter over time
 
 ---
 
@@ -56,319 +23,287 @@ AutoQuery Solver Agent monitors MySQL database activity in real time, capturing 
 ```
 MySQL Database (binlog enabled)
         ↓
-Debezium CDC Connector  (port 8083)
+Debezium CDC Connector          ← captures every INSERT / UPDATE / DELETE
         ↓
-Apache Kafka (KRaft mode)  (port 9092)
+Apache Kafka                    ← streams events to all workers
         ↓
-Worker 2 — Inspector Agent
-  ├── Layer 1: Rule-Based (Regex + Pandera)
-  ├── Layer 2: AI-Powered (Gemini API)
-  ├── Layer 3: Duplicate Detection (FuzzyWuzzy + Metaphone)
-  └── Live Dashboard (Streamlit, port 8501)
+Worker 2 — Inspector            ← detects anomalies (3-layer check)
+        ↓  (same Kafka topic, different consumer group)
+Worker 3 — Doctor               ← AI fixes the anomalies
         ↓
-Worker 3 — Doctor (Correction Agent)
-  └── Claude API + LangGraph + Vector Memory
+Worker 4 — Checker  [upcoming]  ← human approves sensitive fixes
         ↓
-Worker 4 — Checker (Validation Agent)
-  └── Rule Engine + Human Approval UI + Slack Alert
+Worker 5 — Fixer    [upcoming]  ← writes fix safely to database
         ↓
-Worker 5 — Fixer (Execution Agent)
-  └── SQLAlchemy + SAVEPOINT + Rollback Safety Net
-        ↓
-Worker 6 — Diary Keeper (Logging Agent)
-  └── Audit Table + pgvector Memory + Grafana Dashboard
+Worker 6 — Diary    [upcoming]  ← logs everything, teaches the system
 ```
 
 ---
 
-## 🐳 Docker Services
+## 🛠️ Tech Stack
 
-| Container | Image | Port | Role |
-|---|---|---|---|
-| `watchman_mysql` | mysql:8.0 | `${MYSQL_PORT}` | Primary database with binlog enabled |
-| `watchman_kafka` | confluentinc/cp-kafka:7.5.0 | 9092 | Event streaming broker (KRaft) |
-| `watchman_debezium` | debezium/connect:2.4 | 8083 | CDC connector |
-| `watchman_kafka_ui` | provectuslabs/kafka-ui | 8080 | Live Kafka stream browser |
-| `watchman_inspector` | custom (worker2/) | — | 3-layer anomaly inspection + dashboard |
-| `watchman_doctor` | custom (worker3/) | — | AI correction agent |
-| `watchman_checker` | custom (worker4/) | — | Validation + human approval gate |
-| `watchman_fixer` | custom (worker5/) | — | Safe database write execution |
-| `watchman_diary` | custom (worker6/) | — | Audit logging + self-learning memory |
+| Layer | What We Actually Use |
+|---|---|
+| Database | MySQL 8.0 (binlog enabled) |
+| CDC | Debezium 2.4 |
+| Event Streaming | Apache Kafka (Confluent 7.5, KRaft — no Zookeeper) |
+| Rule Validation | Python Regex + Pandera |
+| Duplicate Detection | FuzzyWuzzy + Double Metaphone |
+| AI Inspection | Groq API (llama-3.3-70b-versatile) |
+| AI Correction | Groq API (llama-3.3-70b-versatile) |
+| Agent Framework | LangGraph |
+| Vector Memory | ChromaDB (cosine similarity) |
+| Embeddings | n-gram hash (pure Python, no API key needed) |
+| Dashboard | Vanilla HTML/JS + WebSocket (Worker 2 → port 5500, Worker 3 → port 5501) |
+| Containerization | Docker + Docker Compose |
 
 ---
 
-## ⚙️ Setup & Quick Start
+## 🐳 Running Services
+
+| Container | Port | Role |
+|---|---|---|
+| `watchman_mysql` | 3307 | MySQL database |
+| `watchman_kafka` | 9092 | Kafka broker |
+| `watchman_debezium` | 8083 | CDC connector |
+| `watchman_kafka_ui` | 8080 | Kafka browser UI |
+| `watchman_inspector` | 8765 | Worker 2 WebSocket |
+| `watchman_doctor` | 8766, 8767 | Worker 3 WebSocket + HTTP API |
+| `watchman_dashboard` | 5500 | Worker 2 dashboard |
+| `watchman_doctor_dashboard` | 5501 | Worker 3 dashboard |
+
+---
+
+## ⚙️ Quick Start
 
 ### Prerequisites
+- Docker Desktop
+- Git
+- Groq API key → https://console.groq.com
 
-- Docker Desktop — https://www.docker.com/products/docker-desktop
-- Git — https://git-scm.com
-- Gemini API key — https://aistudio.google.com/apikey
-
-### Step 1 — Clone the repository
-
+### Step 1 — Clone
 ```bash
 git clone https://github.com/RohitKumar186/AutoQuerySolver.git
 cd AutoQuerySolver
 ```
 
-### Step 2 — Configure environment variables
-
+### Step 2 — Environment
 ```bash
 cp .env.example .env
 ```
-
-Open `.env` and fill in your values:
-
-```env
-DB_ROOT_PASSWORD=super_secure_root_pass_2026
-DB_NAME=autoquery_db
-DB_USER=solver_admin
-DB_PASSWORD=secure_agent_password_2026
+DB_ROOT_PASSWORD=
+DB_NAME=
+DB_USER=
+DB_PASSWORD=
 MYSQL_PORT=3307
 KAFKA_TOPIC=dbserver1.autoquery_db.customers
-GEMINI_API_KEY=your_gemini_api_key_here
-```
+GROK_API_KEY=write_your_api_key_here
 
-### Step 3 — Start the full stack
 
+
+### Step 3 — Start everything
 ```bash
-docker compose up --build inspector_agent
+docker compose up -d
 ```
 
-### Step 4 — Register the Debezium connector
-
+### Step 4 — Register Debezium connector
 ```bash
 curl -X POST "http://localhost:8083/connectors" \
   -H "Content-Type: application/json" \
   -d @config/debezium-connector.json
 ```
 
-### Step 5 — Test anomaly detection
-
+### Step 5 — Test it
 ```bash
-docker exec -it watchman_mysql mysql -u root -p<DB_ROOT_PASSWORD> autoquery_db
+docker exec -it watchman_mysql mysql -uroot -pYour_Password autoquery_db -e \
+  "INSERT INTO customers (name, phone) VALUES ('Rohit Sin11', '935684243A');"
 ```
 
-```sql
-INSERT INTO customers (name, phone) VALUES ('R4hul $hmara', 'not-a-phone');
-```
-
-### Step 6 — Watch the inspector logs
-
+### Step 6 — Watch the Doctor fix it
 ```bash
-docker logs -f watchman_inspector
+docker logs -f watchman_doctor
 ```
 
-### Service URLs
+Expected output:
+```
+name:  Rohit Sin11  →  Rohit Singh       ✅ typo fixed by AI
+phone: 935684243A   →  NEEDS_CORRECTION  ⚠️  user must provide correct number
+```
 
-| Service | URL |
+### Dashboards
+| Dashboard | URL |
 |---|---|
-| Anomaly Dashboard (Streamlit) | http://localhost:8501 |
+| Inspector (Worker 2) | http://localhost:5500 |
+| Doctor (Worker 3) | http://localhost:5501 |
 | Kafka UI | http://localhost:8080 |
-| Debezium REST API | http://localhost:8083 |
-| Human Approval UI | http://localhost:3000 |
-| MySQL | localhost:3307 |
 
 ---
 
 ## ✅ Worker 1 — Monitoring Agent *(Completed)*
 
-Watches MySQL continuously for row-level changes using Debezium CDC. Captures INSERT, UPDATE, and DELETE operations and publishes them as events to Kafka topics. Tracks schema changes automatically and provides a reliable, near real-time event stream for downstream workers.
+Watches MySQL using Debezium CDC. Captures every INSERT, UPDATE, DELETE from the binlog and publishes them as events to a Kafka topic in real time — no polling, no delay.
 
-**Key features:** event-driven architecture, persistent volumes, automatic restart on failure, isolated Docker network.
+**Key config:**
+```
+binlog-format=ROW
+binlog-row-image=FULL
+server-id=1
+```
 
 ---
 
 ## ✅ Worker 2 — Inspector Agent *(Completed)*
 
-Consumes every CDC event from Kafka in real time and runs three layers of checks on every incoming record. Clean records are logged; anomalies are flagged immediately with a detailed issue breakdown. Results are streamed to a live Streamlit dashboard.
+Consumes every CDC event from Kafka and runs 3 layers of checks on every record.
 
-### 3-Layer Inspection System
+### 3-Layer Inspection
 
-#### Layer 1 — Rule-Based Checking
+**Layer 1 — Rule-Based**
+- Regex patterns for `name`, `phone`, `email`, `date` fields
+- Pandera schema validation for types and ranges
 
-| Tool | Purpose |
-|---|---|
-| Python Regex | Validates email, phone, date, and name formats |
-| Pandera | Schema-level type and range validation |
+**Layer 2 — AI Check (Groq)**
+- Only fires if Layers 1 & 2 pass
+- Sends record to Groq `llama-3.3-70b` to flag typos, inconsistencies, suspicious values
+- Returns a JSON array of issue strings
 
-#### Layer 2 — AI-Powered Checking
+**Layer 3 — Duplicate Detection**
+- FuzzyWuzzy token sort ratio ≥ 85% for near-duplicate names
+- Double Metaphone for phonetically similar names (e.g. "Singh" vs "Sinng")
+- Exact email and phone deduplication
 
-| Tool | Purpose |
-|---|---|
-| Google Gemini API | Reads each record and flags typos, inconsistencies, and suspicious values |
-
-#### Layer 3 — Duplicate Detection
-
-| Tool | Purpose |
-|---|---|
-| FuzzyWuzzy / RapidFuzz | Catches near-duplicate names (e.g. "Rahul Sharma" vs "Rahul Shmara") |
-| Double Metaphone | Matches names that sound the same even if spelled differently |
-
-### Live Dashboard
-
-A Streamlit dashboard (port 8501) visualises the inspector's output in real time — live event feed, anomaly vs clean record counts, drill-down per flagged record, and filters by event type and anomaly layer.
+### Dashboard (port 5500)
+Live event feed, anomaly counts, issue type breakdown, filter by clean/anomaly/AI/duplicate.
 
 ### Sample Output
-
 ```
-📥 Event [C] — {'id': 11, 'name': 'R4hul $hmara', 'phone': 'not-a-phone', ...}
-⚠️  Rule issues: ["[FORMAT] 'name' does not match name pattern", "[FORMAT] 'phone' does not match phone pattern"]
-🤖 AI issues : ["Name 'R4hul $hmara' appears to be a typo"]
-🔁 Dup issues: ["[NEAR-DUPLICATE] 'R4hul $hmara' is 100% similar to 'r4hul $hmara'"]
-❌ ANOMALY DETECTED — 7 issue(s)
+📥 Event [C] — {'id': 11, 'name': 'R4hul $hmara', 'phone': 'not-a-phone'}
+⚠️  Rule issues: ["[FORMAT] name does not match pattern", "[FORMAT] phone does not match pattern"]
+🤖 AI issues  : ["Name 'R4hul $hmara' appears to be a typo"]
+❌ ANOMALY DETECTED — 3 issue(s)
 ```
 
 ### File Structure
-
 ```
 worker2/
-├── inspector_agent.py        # Main Kafka consumer loop
-├── dashboard/
-│   └── app.py                # Streamlit live dashboard
+├── inspector_agent.py      # Kafka consumer + WebSocket broadcast
 ├── checks/
-│   ├── rule_based.py         # Regex + Pandera checks
-│   ├── ai_checker.py         # Gemini API integration
-│   └── duplicate.py          # FuzzyWuzzy + Metaphone
+│   ├── rule_based.py       # Regex + Pandera
+│   ├── ai_checker.py       # Groq API
+│   └── duplicate.py        # FuzzyWuzzy + Metaphone
+├── dashboard.html          # Live dashboard
 ├── requirements.txt
 └── Dockerfile
 ```
 
 ---
 
-## 🔄 Worker 3 — The Doctor (Correction Agent) *(Upcoming)*
+## ✅ Worker 3 — Doctor Agent *(Completed)*
 
-Figures out the best fix for every flagged anomaly using AI reasoning and past experience stored in a vector memory bank.
+Consumes the same Kafka topic (separate consumer group) and runs a LangGraph pipeline to intelligently fix every anomalous record.
 
-### The AI Brain
+### Pipeline
+```
+[check_issues] → clean? → skip
+              → issues? → [embed] → [search] → [fixer] → [validator] → [saver]
+```
 
-| Tool | Purpose |
-|---|---|
-| Claude API (Sonnet) | Reads the bad record and writes the fix with explanation |
-| LangChain | Toolkit that helps Claude talk to databases and other tools |
+| Step | File | What it does |
+|---|---|---|
+| check_issues | `nodes/check_issues.py` | Re-runs rule + duplicate checks |
+| embed | `issues/embed.py` | Generates 384-dim n-gram hash vector |
+| search | `issues/search.py` | Finds top-3 similar past fixes in ChromaDB |
+| fixer | `issues/fixer.py` | Asks Groq to generate the fix |
+| validator | `issues/validator.py` | Re-runs rule checks on fixed record |
+| saver | `issues/saver.py` | Saves fix to ChromaDB + broadcasts to dashboard |
 
-### Memory / Knowledge Base
+### Smart Fixing Logic
 
-| Tool | Purpose |
-|---|---|
-| pgvector (in Postgres) | Stores all past fixes so the Doctor can remember what worked before |
-| Pinecone (optional) | Cloud-based memory store — easier to set up than pgvector |
-| OpenAI / Claude Embeddings | Converts fixes into a searchable format so similar ones can be found |
+| Input | Output | Reason |
+|---|---|---|
+| `Rohit Sin11` | `Rohit Singh` | Real name with typo → fixed |
+| `rahul shrma` | `Rahul Sharma` | Real name with typo → fixed |
+| `Priya Patl` | `Priya Patel` | Real name with typo → fixed |
+| `B@d Us3r!` | `UNKNOWN` | Pure garbage → cannot fix |
+| `J0hn!!` | `UNKNOWN` | Pure garbage → cannot fix |
+| `935684243A` | `NEEDS_CORRECTION` | Phone is private → user must correct |
+| `not-a-phone` | `NEEDS_CORRECTION` | Phone is private → user must correct |
 
-### Agent Framework
+### ChromaDB Memory
+Every fix is saved as a vector in ChromaDB. Next time a similar record comes in, the top-3 most similar past fixes are passed to Groq as examples — the system gets smarter with every fix.
 
-| Tool | Purpose |
-|---|---|
-| LangGraph | Manages the Doctor's thinking steps — like a flowchart runner for AI |
-| CrewAI (alternative) | Lets multiple AI agents work as a team |
+Similarity scores after warming up:
+```
+Similar fix — similarity=0.922  ✅
+Similar fix — similarity=0.910  ✅
+```
 
----
+### Dashboard (port 5501)
+- **Fix Feed tab** — every fix as a card: original record → fixed record side by side, Groq explanation, issues detected
+- **Live Table tab** — full database table updating in real time, FIXED / CLEAN / NEEDS INPUT badges
 
-## 🔄 Worker 4 — The Checker (Validation Agent) *(Upcoming)*
-
-Makes sure every fix is safe, correct, and follows the company's rules before it is applied.
-
-### Rule Engine Tools
-
-| Tool | Purpose |
-|---|---|
-| JSON Schema | Defines what valid data looks like in code |
-| Pydantic | Double-checks data types automatically |
-| SQLAlchemy | Checks if the fix respects database constraints (foreign keys, etc.) |
-
-### Human Approval Tools
-
-| Tool | Purpose |
-|---|---|
-| FastAPI | Builds the approve / reject screen that managers see |
-| React (frontend) | Makes the approval screen work in a browser |
-| Redis Queue | Holds fixes that are waiting for human approval |
-
-### Notification Tools
-
-| Tool | Purpose |
-|---|---|
-| Slack API / Email (SMTP) | Sends a "please approve this fix" alert to the right person |
-
----
-
-## 🔄 Worker 5 — The Fixer (Execution Agent) *(Upcoming)*
-
-The only worker that actually edits the database — very carefully, with a full safety net.
-
-### Database Writing
-
-| Tool | Purpose |
-|---|---|
-| SQLAlchemy / psycopg2 | Writes SQL commands to the database safely |
-| SQL Transactions + SAVEPOINT | Checkpoint system — if something breaks, it rewinds like a video game save |
-
-### Safety / Rollback Tools
-
-| Tool | Purpose |
-|---|---|
-| pg_dump / mysqldump | Takes a snapshot of the data before changing it |
-| Flyway / Liquibase | Tracks all database changes like a history book — easy to undo |
-
-### Testing the Fix Worked
-
-| Tool | Purpose |
-|---|---|
-| SQLAlchemy read-back check | After editing, reads the row again to confirm the fix actually applied |
-| pytest | Runs automatic tests to make sure the Fixer is working correctly |
+### File Structure
+```
+worker3/
+├── doctor_agent.py         # Kafka consumer + WebSocket + HTTP API
+├── doctor_dashboard.html   # Fix Feed + Live Table dashboard
+├── graph/
+│   └── pipeline.py         # LangGraph pipeline definition
+├── nodes/
+│   └── check_issues.py     # Step 0 — re-run checks
+├── issues/
+│   ├── embed.py            # Step 1 — n-gram hash embedding
+│   ├── search.py           # Step 2 — ChromaDB similarity search
+│   ├── fixer.py            # Step 3 — Groq fix generation
+│   ├── validator.py        # Step 4 — validate fix
+│   └── saver.py            # Step 5 — save + broadcast
+├── utils/
+│   └── chroma_client.py    # ChromaDB client
+├── requirements.txt
+└── Dockerfile
+```
 
 ---
 
-## 🔄 Worker 6 — The Diary Keeper (Logging Agent) *(Upcoming)*
+## 🔜 Worker 4 — Checker Agent *(Coming)*
 
-Records everything forever and teaches the system to get smarter over time.
+When a record has `NEEDS_CORRECTION` fields (phone, email — private data the AI cannot guess), Worker 4 will:
+- Put the fix in a queue
+- Send a notification to the user (Slack / Email)
+- Show an approval UI where the user can enter the correct value
+- Pass the approved fix to Worker 5
 
-### Audit Logging Tools
+**Planned tech:** FastAPI + Redis queue + Email/Slack notification
 
-| Tool | Purpose |
-|---|---|
-| PostgreSQL audit table | Append-only table that stores every fix ever made — can't be deleted |
-| Python logging module | Records what happened in plain text files as backup |
-| ELK Stack (optional) | Elasticsearch + Kibana — lets you search and visualise logs on a dashboard |
+---
 
-### Self-Learning Tools
+## 🔜 Worker 5 — Fixer Agent *(Coming)*
 
-| Tool | Purpose |
-|---|---|
-| pgvector / Pinecone | Saves what was fixed as memory the Doctor can search next time |
-| Claude API (embedding) | Converts each fix into a searchable fingerprint for the memory bank |
+The only worker that actually writes back to MySQL. Uses SQL transactions with SAVEPOINT so if anything goes wrong, it rolls back automatically — like a video game checkpoint.
 
-### Dashboard / Reporting Tools
+**Planned tech:** SQLAlchemy + MySQL transactions + SAVEPOINT + read-back verification
 
-| Tool | Purpose |
-|---|---|
-| Grafana | Live dashboard showing how many fixes were made, what types, how often |
-| Metabase (simpler option) | Easier dashboard tool — good for non-technical managers to see reports |
+---
+
+## 🔜 Worker 6 — Diary Keeper *(Coming)*
+
+Logs every fix permanently in an append-only audit table. Also feeds fixes back into the ChromaDB memory so Worker 3 gets smarter over time.
+
+**Planned tech:** MySQL audit table + Python logging + ChromaDB memory update
 
 ---
 
 ## 🎯 Project Goals
 
-- Build a scalable, production-ready database monitoring platform
-- Enable real-time, event-driven processing with no polling overhead
-- Detect, correct, and verify anomalies automatically without manual auditing
-- Build AI memory so the system gets smarter with every fix
-- Deliver a fully auditable, self-healing database observability system
-
----
-
-## 🔮 Future Enhancements
-
-- ML-based anomaly detection models
-- Multi-database support (PostgreSQL, MongoDB)
-- Historical trend analysis
-- Natural language querying of database events
-- Auto-tuning of detection thresholds based on past false positives
+- Build a production-ready, self-healing database monitoring system
+- Zero polling — pure event-driven CDC architecture
+- AI that gets smarter with every fix it makes
+- Human in the loop for sensitive data corrections
+- Full audit trail of every change ever made
 
 ---
 
 ## 👨‍💻 Author
 
-**Rohit Kumar**  
+**Rohit Kumar**
 GitHub: [@RohitKumar186](https://github.com/RohitKumar186)
