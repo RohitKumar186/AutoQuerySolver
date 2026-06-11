@@ -35,9 +35,9 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
-      KAFKA_LOG_DIRS: '/var/lib/kafka/data'   # ✅ use the image's pre-owned directory
+      KAFKA_LOG_DIRS: '/var/lib/kafka/data'
     volumes:
-      - kafka_data:/var/lib/kafka/data        # ✅ mount here instead of /tmp
+      - kafka_data:/var/lib/kafka/data
     networks:
       - agent_network
     depends_on:
@@ -60,7 +60,7 @@ services:
       - kafka
     networks:
       - agent_network
-  
+
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: watchman_kafka_ui
@@ -74,11 +74,6 @@ services:
     depends_on:
       - kafka
 
-  # ─────────────────────────────────────────────────────────────────────────────
-# ADD this service block inside your existing docker-compose.yml
-# under the `services:` key, alongside the other services.
-# ─────────────────────────────────────────────────────────────────────────────
-
   inspector_agent:
     build:
       context: ./worker2
@@ -86,18 +81,47 @@ services:
     container_name: watchman_inspector
     restart: always
     ports:
-    - "8765:8765"
+      - "8765:8765"
     environment:
       KAFKA_BROKER: kafka:29092
       KAFKA_TOPIC: dbserver1.autoquery_db.customers
       KAFKA_GROUP: inspector-group
       GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GROK_API_KEY: ${GROK_API_KEY}
     depends_on:
       - kafka
       - debezium
     networks:
-      - agent_network 
-  dashboard:                          # ← add from here
+      - agent_network
+
+  doctor_agent:
+    build:
+      context: ./worker3
+      dockerfile: Dockerfile
+    container_name: watchman_doctor
+    restart: always
+    ports:
+      - "8766:8766"
+      - "8767:8767" 
+    environment:
+      KAFKA_BROKER: kafka:29092
+      KAFKA_TOPIC: dbserver1.autoquery_db.customers
+      KAFKA_GROUP: doctor-group
+      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      GROK_API_KEY: ${GROK_API_KEY}
+      CHROMA_PATH: /chroma_data
+      WS_PORT: "8766"
+    volumes:
+      - chroma_data:/chroma_data                        # ChromaDB persistent storage
+      - ./worker2/checks:/worker2/checks                # Reuse Worker 2 rule + duplicate checks
+    depends_on:
+      - kafka
+      - debezium
+      - inspector_agent
+    networks:
+      - agent_network
+
+  dashboard:
     image: nginx:alpine
     container_name: watchman_dashboard
     ports:
@@ -106,13 +130,23 @@ services:
       - ./worker2/dashboard.html:/usr/share/nginx/html/index.html
     networks:
       - agent_network
+
+  doctor_dashboard:
+    image: nginx:alpine
+    container_name: watchman_doctor_dashboard
+    ports:
+      - "5501:80"
+    volumes:
+      - ./worker3/doctor_dashboard.html:/usr/share/nginx/html/index.html
+    networks:
+      - agent_network
+
 volumes:
   mysql_data:
-  kafka_data:   # ✅ NEW
+  kafka_data:
+  chroma_data:    # ChromaDB persistent storage for Worker 3
 
 networks:
   agent_network:
     name: agent_network
     driver: bridge
-
-  

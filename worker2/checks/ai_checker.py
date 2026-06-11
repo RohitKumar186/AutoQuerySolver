@@ -1,6 +1,6 @@
 """
-AI-Powered Checker
-Sends the record to Google Gemini and asks it to flag anything suspicious.
+Worker 2 — AI Checker
+Uses Grok API (OpenAI-compatible) to flag suspicious records.
 """
 
 import os
@@ -12,8 +12,10 @@ from dotenv import load_dotenv
 load_dotenv()
 log = logging.getLogger("AIChecker")
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GROK_API_KEY = os.getenv("GROK_API_KEY", "")
+# fixer.py and ai_checker.py
+GROK_URL   = "https://api.groq.com/openai/v1/chat/completions"  # ← change this
+GROK_MODEL = "llama-3.3-70b-versatile"                          # ← change this
 
 SYSTEM_PROMPT = """
 You are a strict data-quality inspector for a database monitoring system.
@@ -32,38 +34,40 @@ Do NOT include any explanation outside the JSON array.
 
 class AIChecker:
     def __init__(self):
-        if not GEMINI_API_KEY:
-            log.warning("GEMINI_API_KEY not set — AI checker disabled.")
+        if not GROK_API_KEY:
+            log.warning("GROK_API_KEY not set — AI checker disabled.")
 
-    def check(self, record: dict) -> list[str]:
-        if not GEMINI_API_KEY:
+    def check(self, record: dict) -> list:
+        if not GROK_API_KEY:
             return []
-
-        prompt = f"{SYSTEM_PROMPT}\n\nInspect this database record and report issues:\n\n{json.dumps(record, indent=2)}"
 
         try:
             response = httpx.post(
-                f"{GEMINI_URL}?key={GEMINI_API_KEY}",
-                headers={"Content-Type": "application/json"},
+                GROK_URL,
+                headers={
+                    "Content-Type":  "application/json",
+                    "Authorization": f"Bearer {GROK_API_KEY}",
+                },
                 json={
-                    "contents": [
-                        {"parts": [{"text": prompt}]}
-                    ]
+                    "model": GROK_MODEL,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user",   "content": f"Inspect this record:\n\n{json.dumps(record, indent=2)}"},
+                    ],
+                    "temperature": 0,
                 },
                 timeout=15,
             )
             response.raise_for_status()
 
-            text = response.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-
-            # Strip markdown code fences if Gemini wraps in ```json
+            text = response.json()["choices"][0]["message"]["content"].strip()
             text = text.replace("```json", "").replace("```", "").strip()
 
             issues = json.loads(text)
             return issues if isinstance(issues, list) else []
 
         except json.JSONDecodeError:
-            log.error("AI checker: could not parse Gemini response as JSON.")
+            log.error("AI checker: could not parse Grok response as JSON.")
             return []
         except Exception as exc:
             log.error(f"AI checker error: {exc}")

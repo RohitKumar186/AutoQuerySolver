@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watchman Doctor — Fix Dashboard</title>
+<style>
+  :root {
+    --bg: #0d0f12; --surface: #141720; --surface2: #1c2030; --surface3: #232840;
+    --border: rgba(255,255,255,0.07); --border2: rgba(255,255,255,0.13);
+    --text: #e2e4ec; --muted: #6b7280; --accent: #5b8ef5;
+    --green: #22c55e; --red: #ef4444; --amber: #f59e0b;
+    --purple: #a78bfa; --cyan: #22d3ee; --orange: #fb923c;
+    --font: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); font-size: 13px; min-height: 100vh; }
+
+  header { display:flex; align-items:center; gap:12px; padding:13px 24px; border-bottom:1px solid var(--border); background:var(--surface); position:sticky; top:0; z-index:100; }
+  .logo { font-size:15px; font-weight:700; color:var(--purple); }
+  .logo span { color:var(--text); }
+  .badge-w { font-size:10px; padding:2px 8px; border-radius:4px; background:rgba(167,139,250,.15); color:var(--purple); border:1px solid rgba(167,139,250,.3); }
+  .dot-live { width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 6px var(--green); animation:pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
+  .hstats { margin-left:auto; display:flex; gap:16px; align-items:center; }
+  .hstat { font-size:11px; color:var(--muted); }
+  .hstat b { color:var(--text); }
+  .conn-ind { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); margin-left:16px; }
+  .cdot { width:6px; height:6px; border-radius:50%; background:var(--red); transition:background .3s; }
+  .cdot.on { background:var(--green); }
+
+  .tabs { display:flex; border-bottom:1px solid var(--border); background:var(--surface); padding:0 24px; }
+  .tab { padding:10px 18px; font-size:12px; color:var(--muted); cursor:pointer; border-bottom:2px solid transparent; transition:all .15s; }
+  .tab:hover { color:var(--text); }
+  .tab.active { color:var(--text); border-bottom-color:var(--purple); }
+  .tab-panel { display:none; height:calc(100vh - 94px); }
+  .tab-panel.active { display:flex; }
+
+  /* ── Sidebar ── */
+  aside { width:260px; flex-shrink:0; border-right:1px solid var(--border); background:var(--surface); display:flex; flex-direction:column; overflow-y:auto; }
+  .ab { padding:14px 16px; border-bottom:1px solid var(--border); }
+  .at { font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin-bottom:10px; }
+  .met { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .met:last-child { margin-bottom:0; }
+  .ml { font-size:12px; color:var(--muted); }
+  .mv { font-size:20px; font-weight:700; }
+  .bar-row { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+  .bl { font-size:11px; color:var(--muted); width:72px; text-align:right; flex-shrink:0; }
+  .bt { flex:1; height:5px; background:var(--border); border-radius:3px; overflow:hidden; }
+  .bf { height:100%; border-radius:3px; transition:width .5s ease; }
+  .bc { font-size:11px; color:var(--muted); min-width:20px; text-align:right; }
+  .api-pill { display:flex; align-items:center; gap:6px; padding:6px 10px; border-radius:6px; background:var(--surface2); border:1px solid var(--border2); font-size:11px; margin-bottom:6px; }
+  .adot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+  .fbtn { font-family:var(--font); font-size:11px; padding:5px 10px; border-radius:5px; border:1px solid var(--border2); background:transparent; color:var(--muted); cursor:pointer; text-align:left; width:100%; margin-bottom:5px; transition:all .15s; }
+  .fbtn:hover { background:var(--surface2); color:var(--text); }
+  .fbtn.on { border-color:var(--purple); color:var(--text); }
+
+  /* ── Feed ── */
+  main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+  .feedbar { display:flex; align-items:center; gap:8px; padding:10px 14px; border-bottom:1px solid var(--border); background:var(--surface); }
+  .feedbar input, .feedbar select { font-family:var(--font); font-size:12px; background:var(--surface2); border:1px solid var(--border); border-radius:6px; color:var(--text); padding:5px 9px; outline:none; }
+  .feedbar input { width:190px; }
+  .feedbar input:focus { border-color:var(--purple); }
+  .feedbar input::placeholder { color:var(--muted); }
+  .cbtn { margin-left:auto; font-family:var(--font); font-size:11px; padding:4px 12px; border-radius:5px; border:1px solid var(--border2); background:transparent; color:var(--muted); cursor:pointer; }
+  .cbtn:hover { background:var(--surface2); color:var(--text); }
+  #fix-feed { flex:1; overflow-y:auto; scrollbar-width:thin; scrollbar-color:var(--border2) transparent; }
+  #fix-feed::-webkit-scrollbar { width:5px; }
+  #fix-feed::-webkit-scrollbar-thumb { background:var(--border2); border-radius:3px; }
+  .empty { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; gap:8px; color:var(--muted); font-size:12px; }
+
+  /* Fix card */
+  .fix-card { border-bottom:1px solid var(--border); cursor:pointer; transition:background .1s; animation:si .2s ease; }
+  @keyframes si { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:none} }
+  .fix-card:hover, .fix-card.open { background:var(--surface2); }
+  .fch { display:grid; grid-template-columns:3px 1fr; }
+  .fcs { background:var(--purple); }
+  .fcs.v { background:var(--green); }
+  .fcs.p { background:var(--amber); }
+  .fcsm { padding:11px 14px; }
+  .ftop { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+  .opb { font-size:9px; font-weight:700; letter-spacing:.5px; padding:2px 6px; border-radius:4px; }
+  .opc { background:rgba(34,197,94,.15); color:var(--green); }
+  .opu { background:rgba(245,158,11,.15); color:var(--amber); }
+  .fid { font-size:12px; font-weight:600; }
+  .ftime { margin-left:auto; font-size:10px; color:var(--muted); }
+  .chips { display:flex; gap:5px; flex-wrap:wrap; }
+  .chip { font-size:10px; padding:2px 8px; border-radius:10px; }
+  .chv { background:rgba(34,197,94,.1); color:#4ade80; border:1px solid rgba(34,197,94,.2); }
+  .chp { background:rgba(245,158,11,.12); color:#fbbf24; border:1px solid rgba(245,158,11,.2); }
+  .chi { background:rgba(239,68,68,.1); color:#f87171; border:1px solid rgba(239,68,68,.2); }
+  .chc { background:rgba(167,139,250,.1); color:var(--purple); border:1px solid rgba(167,139,250,.2); }
+  .chf { background:rgba(34,211,238,.1); color:var(--cyan); border:1px solid rgba(34,211,238,.2); }
+  .fix-detail { display:none; padding:0 14px 14px 17px; }
+  .fix-card.open .fix-detail { display:block; }
+  .dgrid { display:grid; grid-template-columns:1fr auto 1fr; gap:10px; align-items:start; margin-bottom:10px; }
+  .dcol { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+  .dclabel { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted); margin-bottom:8px; }
+  .darrow { display:flex; align-items:center; justify-content:center; color:var(--purple); font-size:18px; padding-top:28px; }
+  .drow { display:flex; justify-content:space-between; gap:8px; margin-bottom:5px; font-size:11px; }
+  .drow:last-child { margin-bottom:0; }
+  .dk { color:var(--muted); flex-shrink:0; }
+  .dv { color:var(--text); text-align:right; word-break:break-all; }
+  .dv.bad { color:var(--red); text-decoration:line-through; opacity:.7; }
+  .dv.ok { color:var(--green); font-weight:600; }
+  .expbox { background:var(--bg); border:1px solid rgba(167,139,250,.2); border-radius:8px; padding:10px 12px; margin-bottom:10px; }
+  .explabel { font-size:10px; text-transform:uppercase; letter-spacing:.5px; color:var(--purple); margin-bottom:4px; }
+  .exptext { font-size:11px; color:var(--text); line-height:1.6; }
+  .issbox { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; }
+  .issitem { display:flex; gap:8px; margin-bottom:5px; font-size:11px; }
+  .issitem:last-child { margin-bottom:0; }
+
+  /* ── Table tab ── */
+  .tpage { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+  .tbar { display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--surface); flex-wrap:wrap; }
+  .tbar input { font-family:var(--font); font-size:12px; background:var(--surface2); border:1px solid var(--border); border-radius:6px; color:var(--text); padding:5px 9px; width:200px; outline:none; }
+  .tbar input:focus { border-color:var(--cyan); }
+  .tbar input::placeholder { color:var(--muted); }
+  .tstat { font-size:11px; color:var(--muted); }
+  .tstat b { color:var(--text); }
+  .rbtn { font-family:var(--font); font-size:11px; padding:4px 12px; border-radius:5px; border:1px solid rgba(34,211,238,.3); background:transparent; color:var(--cyan); cursor:pointer; margin-left:auto; }
+  .rbtn:hover { background:rgba(34,211,238,.08); }
+  .twrap { flex:1; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--border2) transparent; }
+  .twrap::-webkit-scrollbar { width:5px; height:5px; }
+  .twrap::-webkit-scrollbar-thumb { background:var(--border2); border-radius:3px; }
+  table.dbt { width:100%; border-collapse:collapse; }
+  table.dbt th { position:sticky; top:0; background:var(--surface); padding:9px 16px; text-align:left; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; border-bottom:1px solid var(--border2); white-space:nowrap; }
+  table.dbt td { padding:9px 16px; font-size:12px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  table.dbt tr:hover td { background:var(--surface2); }
+  table.dbt tr.rnew td { animation:rf .9s ease; }
+  @keyframes rf { 0%{background:rgba(34,197,94,.18)} 100%{background:transparent} }
+  table.dbt tr.rfixed td { animation:rpf .9s ease; }
+  @keyframes rpf { 0%{background:rgba(167,139,250,.18)} 100%{background:transparent} }
+  .rbadge { font-size:9px; padding:2px 7px; border-radius:3px; font-weight:700; }
+  .rb-clean   { background:rgba(34,197,94,.15);   color:var(--green); }
+  .rb-fixed   { background:rgba(167,139,250,.15); color:var(--purple); }
+  .rb-partial { background:rgba(245,158,11,.1);  color:var(--amber); }
+  .rb-nc      { background:rgba(251,146,60,.15);  color:var(--orange); }
+  .val-unk    { color:var(--amber); }
+  .val-nc     { color:var(--orange); }
+  .val-ok     { color:var(--text); }
+
+  .sbar { padding:5px 16px; font-size:11px; background:var(--surface); border-top:1px solid var(--border); color:var(--muted); display:flex; align-items:center; gap:8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">watch<span>man</span></div>
+  <span class="badge-w">Doctor · Worker 3</span>
+  <div class="dot-live"></div>
+  <div class="hstats">
+    <span class="hstat">Fixed: <b id="h-fixed">0</b></span>
+    <span class="hstat">Valid: <b id="h-valid" style="color:var(--green)">0</b></span>
+    <span class="hstat">Partial: <b id="h-partial" style="color:var(--amber)">0</b></span>
+    <span class="hstat">Table rows: <b id="h-rows" style="color:var(--cyan)">0</b></span>
+  </div>
+  <div class="conn-ind">
+    <div class="cdot" id="cdot"></div>
+    <span id="clabel">Connecting…</span>
+  </div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('fixes',this)">Fix Feed</div>
+  <div class="tab" onclick="switchTab('table',this)">Live Table</div>
+</div>
+
+<!-- FIX FEED -->
+<div id="tab-fixes" class="tab-panel active">
+  <aside>
+    <div class="ab">
+      <div class="at">Overview</div>
+      <div class="met"><span class="ml">Total fixes</span><span class="mv" style="color:var(--purple)" id="s-total">0</span></div>
+      <div class="met"><span class="ml">Valid</span><span class="mv" style="color:var(--green)" id="s-valid">0</span></div>
+      <div class="met"><span class="ml">Partial</span><span class="mv" style="color:var(--amber)" id="s-partial">0</span></div>
+      <div class="met"><span class="ml">Avg confidence</span><span class="mv" style="color:var(--cyan)" id="s-conf">—</span></div>
+    </div>
+    <div class="ab">
+      <div class="at">Fields fixed</div>
+      <div class="bar-row"><span class="bl">name</span><div class="bt"><div class="bf" id="bar-name" style="width:0;background:var(--purple)"></div></div><span class="bc" id="cnt-name">0</span></div>
+      <div class="bar-row"><span class="bl">phone</span><div class="bt"><div class="bf" id="bar-phone" style="width:0;background:var(--cyan)"></div></div><span class="bc" id="cnt-phone">0</span></div>
+      <div class="bar-row"><span class="bl">email</span><div class="bt"><div class="bf" id="bar-email" style="width:0;background:var(--green)"></div></div><span class="bc" id="cnt-email">0</span></div>
+      <div class="bar-row"><span class="bl">other</span><div class="bt"><div class="bf" id="bar-other" style="width:0;background:var(--amber)"></div></div><span class="bc" id="cnt-other">0</span></div>
+    </div>
+    <div class="ab">
+      <div class="at">APIs Used</div>
+      <div class="api-pill"><div class="adot" style="background:var(--orange)"></div><span>Groq</span><span style="margin-left:auto;color:var(--muted)">llama-3.3-70b</span></div>
+      <div class="api-pill"><div class="adot" style="background:var(--purple)"></div><span>ChromaDB</span><span style="margin-left:auto;color:var(--muted)">cosine</span></div>
+      <div class="api-pill"><div class="adot" style="background:var(--cyan)"></div><span>Embeddings</span><span style="margin-left:auto;color:var(--muted)">n-gram hash</span></div>
+    </div>
+    <div class="ab">
+      <div class="at">Filter</div>
+      <button class="fbtn on" data-f="all" onclick="setFilter('all',this)">All fixes</button>
+      <button class="fbtn" data-f="valid" onclick="setFilter('valid',this)">Valid only</button>
+      <button class="fbtn" data-f="partial" onclick="setFilter('partial',this)">Partial only</button>
+    </div>
+    <div class="ab" style="flex:1">
+      <div class="at">Kafka topic</div>
+      <div style="font-size:11px;color:var(--cyan);word-break:break-all;padding:5px 8px;background:var(--surface2);border-radius:5px;border:1px solid var(--border2)">dbserver1.autoquery_db.customers</div>
+      <div style="margin-top:8px;font-size:11px;color:var(--muted)">WS: <span style="color:var(--text)">:8766</span> &nbsp; API: <span style="color:var(--text)">:8767</span></div>
+    </div>
+  </aside>
+  <main>
+    <div class="feedbar">
+      <input type="text" id="search-box" placeholder="Search by name, issue…" oninput="renderFeed()">
+      <select id="sort-sel" onchange="renderFeed()">
+        <option value="newest">Newest first</option>
+        <option value="oldest">Oldest first</option>
+        <option value="conf">Highest confidence</option>
+      </select>
+      <button class="cbtn" onclick="clearFeed()">Clear</button>
+    </div>
+    <div id="fix-feed">
+      <div class="empty">
+        <span style="font-size:28px">⚕</span>
+        <span>Waiting for anomalies…</span>
+        <span style="font-size:11px">Fixes appear here in real time</span>
+        <button class="cbtn" style="margin-top:8px;color:var(--purple);border-color:var(--purple)" onclick="loadDemo()">Load demo</button>
+      </div>
+    </div>
+    <div class="sbar"><div class="cdot" id="cdot2"></div><span id="ws-status">Connecting to ws://localhost:8766…</span></div>
+  </main>
+</div>
+
+<!-- LIVE TABLE -->
+<div id="tab-table" class="tab-panel">
+  <div class="tpage">
+    <div class="tbar">
+      <input type="text" id="tsearch" placeholder="Search rows…" oninput="renderTable()">
+      <span class="tstat">Total: <b id="t-total">0</b></span>
+      <span class="tstat">Clean: <b id="t-clean" style="color:var(--green)">0</b></span>
+      <span class="tstat">Fixed: <b id="t-fixed" style="color:var(--purple)">0</b></span>
+      <span class="tstat">Needs fix: <b id="t-nc" style="color:var(--orange)">0</b></span>
+      <button class="rbtn" onclick="fetchTable()">↻ Refresh</button>
+    </div>
+    <div class="twrap">
+      <table class="dbt">
+        <thead><tr>
+          <th style="width:60px">ID</th>
+          <th>Name</th>
+          <th>Phone</th>
+          <th>Created At</th>
+          <th style="width:130px">Status</th>
+        </tr></thead>
+        <tbody id="tbody">
+          <tr><td colspan="5" style="text-align:center;color:var(--muted);padding:40px">Loading table data…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="sbar"><div class="cdot" id="cdot3"></div><span id="api-status">Fetching from http://localhost:8767/table…</span></div>
+  </div>
+</div>
+
+<script>
+const S = {
+  fixes: [], filter: 'all',
+  counts: { total:0, valid:0, partial:0, confSum:0 },
+  fields: { name:0, phone:0, email:0, other:0 },
+  tableRows: {},
+};
+
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'table') fetchTable();
+}
+
+/* ── Ingest a fix event from WS ── */
+function ingestFix(ev) {
+  if (ev.type === 'snapshot') {
+    ev.rows.forEach(r => { S.tableRows[r.id] = r; });
+    renderTable(); return;
+  }
+  if (ev.type === 'row') {
+    S.tableRows[ev.record.id] = { ...ev.record, status: ev.status || 'clean' };
+    document.getElementById('h-rows').textContent = Object.keys(S.tableRows).length;
+    renderTable(); return;
+  }
+  if (ev.type !== 'fix') return;
+
+  S.fixes.unshift(ev);
+  S.counts.total++;
+  if (ev.fix_valid) S.counts.valid++; else S.counts.partial++;
+  S.counts.confSum += ev.confidence || 0;
+
+  if (ev.fixed_fields) {
+    Object.keys(ev.fixed_fields).forEach(k => {
+      if (k === 'name') S.fields.name++;
+      else if (k === 'phone') S.fields.phone++;
+      else if (k === 'email') S.fields.email++;
+      else S.fields.other++;
+    });
+  }
+
+  // Update table row with fix
+  const id = ev.original?.id;
+  if (id && S.tableRows[id]) {
+    S.tableRows[id] = {
+      ...S.tableRows[id],
+      ...(ev.fixed_fields || {}),
+      status: ev.fix_valid ? 'fixed' : 'partial',
+    };
+  }
+
+  updateSidebar();
+  renderFeed();
+  renderTable();
+}
+
+function updateSidebar() {
+  const c = S.counts, f = S.fields, t = c.total || 1;
+  const avgConf = c.total ? (c.confSum/c.total*100).toFixed(0)+'%' : '—';
+  document.getElementById('h-fixed').textContent   = c.total;
+  document.getElementById('h-valid').textContent   = c.valid;
+  document.getElementById('h-partial').textContent = c.partial;
+  document.getElementById('s-total').textContent   = c.total;
+  document.getElementById('s-valid').textContent   = c.valid;
+  document.getElementById('s-partial').textContent = c.partial;
+  document.getElementById('s-conf').textContent    = avgConf;
+  const maxF = Math.max(f.name, f.phone, f.email, f.other, 1);
+  ['name','phone','email','other'].forEach(k => {
+    document.getElementById('bar-'+k).style.width = (f[k]/maxF*100)+'%';
+    document.getElementById('cnt-'+k).textContent = f[k];
+  });
+}
+
+function setFilter(f, btn) {
+  S.filter = f;
+  document.querySelectorAll('[data-f]').forEach(b => b.classList.toggle('on', b.dataset.f === f));
+  renderFeed();
+}
+
+/* ── Render fix feed ── */
+function renderFeed() {
+  const feed = document.getElementById('fix-feed');
+  const q    = document.getElementById('search-box').value.toLowerCase();
+  const sort = document.getElementById('sort-sel').value;
+
+  let evs = S.fixes.filter(ev => {
+    if (S.filter === 'valid'   && !ev.fix_valid) return false;
+    if (S.filter === 'partial' &&  ev.fix_valid) return false;
+    return !q || JSON.stringify(ev).toLowerCase().includes(q);
+  });
+  if (sort === 'oldest') evs = [...evs].reverse();
+  if (sort === 'conf')   evs = [...evs].sort((a,b)=>(b.confidence||0)-(a.confidence||0));
+
+  if (!evs.length) {
+    feed.innerHTML = `<div class="empty"><span style="font-size:28px">⚕</span><span>${S.fixes.length?'No matches':'Waiting for anomalies…'}</span><span style="font-size:11px">${S.fixes.length?'Try different filter':'Fixes appear here in real time'}</span>${!S.fixes.length?'<button class="cbtn" style="margin-top:8px;color:var(--purple);border-color:var(--purple)" onclick="loadDemo()">Load demo</button>':''}</div>`;
+    return;
+  }
+  feed.innerHTML = '';
+  evs.forEach((ev,i) => feed.appendChild(buildCard(ev,i)));
+}
+
+function buildCard(ev, idx) {
+  const orig = ev.original||{}, ff = ev.fixed_fields||{}, issues = ev.issues||[];
+  const valid = ev.fix_valid, conf = ((ev.confidence||0)*100).toFixed(0);
+  const card = document.createElement('div');
+  card.className = 'fix-card';
+  card.onclick = () => card.classList.toggle('open');
+
+  const allKeys = [...new Set([...Object.keys(orig), ...Object.keys(ff)])].filter(k=>k!=='created_at');
+  const origRows = allKeys.map(k=>`<div class="drow"><span class="dk">${esc(k)}</span><span class="dv ${ff[k]!==undefined?'bad':''}">${esc(orig[k]??'—')}</span></div>`).join('');
+  const fixRows  = allKeys.map(k=>{const c=ff[k]!==undefined;const v=c?ff[k]:orig[k];return`<div class="drow"><span class="dk">${esc(k)}</span><span class="dv ${c?'ok':''}">${esc(v??'—')}</span></div>`;}).join('');
+  const issRows  = issues.map(i=>`<div class="issitem"><span style="color:var(--red)">▸</span><span>${esc(i)}</span></div>`).join('');
+
+  card.innerHTML = `
+    <div class="fch">
+      <div class="fcs ${valid?'v':'p'}"></div>
+      <div class="fcsm">
+        <div class="ftop">
+          <span class="opb ${ev.op==='u'?'opu':'opc'}">${ev.op==='u'?'UPDATE':'INSERT'}</span>
+          <span class="fid">Record #${esc(String(orig.id||idx))}</span>
+          <span class="ftime">${esc(ev.ts||'')}</span>
+        </div>
+        <div class="chips">
+          <span class="chip ${valid?'chv':'chp'}">${valid?'✓ valid fix':'⚠ partial fix'}</span>
+          <span class="chip chc">confidence ${conf}%</span>
+          ${issues.length?`<span class="chip chi">${issues.length} issue${issues.length>1?'s':''}</span>`:''}
+          ${Object.keys(ff).length?`<span class="chip chf">fixed: ${Object.keys(ff).join(', ')}</span>`:''}
+        </div>
+      </div>
+    </div>
+    <div class="fix-detail">
+      <div class="dgrid">
+        <div class="dcol"><div class="dclabel">Original record</div>${origRows}</div>
+        <div class="darrow">→</div>
+        <div class="dcol"><div class="dclabel">Fixed record</div>${fixRows}</div>
+      </div>
+      ${ev.explanation?`<div class="expbox"><div class="explabel">Groq explanation</div><div class="exptext">${esc(ev.explanation)}</div></div>`:''}
+      ${issRows?`<div class="issbox"><div class="dclabel" style="margin-bottom:6px">Issues (Worker 2)</div>${issRows}</div>`:''}
+    </div>`;
+  return card;
+}
+
+/* ── Render live table ── */
+function renderTable() {
+  const tbody = document.getElementById('tbody');
+  const q     = document.getElementById('tsearch').value.toLowerCase();
+  const rows  = Object.values(S.tableRows)
+    .filter(r => !q || JSON.stringify(r).toLowerCase().includes(q))
+    .sort((a,b) => (b.id||0)-(a.id||0));
+
+  let clean=0, fixed=0, nc=0;
+  rows.forEach(r => {
+    if (r.status==='fixed'||r.status==='partial') fixed++;
+    else clean++;
+    if (String(r.phone)==='NEEDS_CORRECTION'||String(r.name)==='NEEDS_CORRECTION') nc++;
+  });
+
+  document.getElementById('t-total').textContent = rows.length;
+  document.getElementById('t-clean').textContent = clean;
+  document.getElementById('t-fixed').textContent = fixed;
+  document.getElementById('t-nc').textContent    = nc;
+  document.getElementById('h-rows').textContent  = rows.length;
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:40px">No rows yet — data loads automatically when records arrive</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const nameVal  = r.name==='UNKNOWN'?`<span class="val-unk">${esc(r.name)}</span>`:r.name==='NEEDS_CORRECTION'?`<span class="val-nc">${esc(r.name)}</span>`:`<span class="val-ok">${esc(r.name||'—')}</span>`;
+    const phoneVal = r.phone==='NEEDS_CORRECTION'?`<span class="val-nc">NEEDS_CORRECTION ⚠</span>`:r.phone==='UNKNOWN'?`<span class="val-unk">UNKNOWN</span>`:`<span class="val-ok">${esc(r.phone||'—')}</span>`;
+    const badge    = r.status==='fixed'?'<span class="rbadge rb-fixed">FIXED</span>':r.status==='partial'?'<span class="rbadge rb-partial">PARTIAL</span>':'<span class="rbadge rb-clean">CLEAN</span>';
+    const nc       = String(r.phone)==='NEEDS_CORRECTION'?'<span class="rbadge rb-nc" style="margin-left:4px">NEEDS INPUT</span>':'';
+    const trClass  = r.status==='fixed'||r.status==='partial' ? 'rfixed' : 'rnew';
+    return `<tr class="${trClass}"><td style="color:var(--muted)">${esc(String(r.id||''))}</td><td>${nameVal}</td><td>${phoneVal}</td><td style="color:var(--muted);font-size:11px">${esc(r.created_at||'—')}</td><td>${badge}${nc}</td></tr>`;
+  }).join('');
+}
+
+/* ── Fetch full table from HTTP API ── */
+async function fetchTable() {
+  document.getElementById('api-status').textContent = 'Fetching from http://localhost:8767/table…';
+  try {
+    const res  = await fetch('http://localhost:8767/table');
+    const data = await res.json();
+    data.rows.forEach(r => { S.tableRows[r.id] = { ...S.tableRows[r.id], ...r }; });
+    renderTable();
+    document.getElementById('api-status').textContent = `Loaded ${data.rows.length} row(s) from http://localhost:8767/table`;
+    [document.getElementById('cdot3')].forEach(d=>d&&d.classList.add('on'));
+  } catch(e) {
+    document.getElementById('api-status').textContent = 'Cannot reach http://localhost:8767/table — connect Doctor agent';
+  }
+}
+
+function clearFeed() {
+  S.fixes=[]; S.counts={total:0,valid:0,partial:0,confSum:0}; S.fields={name:0,phone:0,email:0,other:0};
+  updateSidebar(); renderFeed();
+}
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+/* ── WebSocket ── */
+let ws=null;
+function connect() {
+  ws = new WebSocket('ws://localhost:8766');
+  ws.onopen = () => {
+    [document.getElementById('cdot'),document.getElementById('cdot2')].forEach(d=>d&&d.classList.add('on'));
+    document.getElementById('ws-status').textContent = 'Connected — ws://localhost:8766';
+    document.getElementById('clabel').textContent    = 'Live';
+  };
+  ws.onmessage = e => { try{ ingestFix(JSON.parse(e.data)); }catch(_){} };
+  ws.onclose = () => {
+    [document.getElementById('cdot'),document.getElementById('cdot2')].forEach(d=>d&&d.classList.remove('on'));
+    document.getElementById('ws-status').textContent = 'Disconnected — retrying in 3s…';
+    document.getElementById('clabel').textContent    = 'Reconnecting…';
+    setTimeout(connect, 3000);
+  };
+}
+connect();
+
+/* Auto-refresh table every 5s */
+setInterval(fetchTable, 5000);
+fetchTable();
+
+/* ── Demo ── */
+function loadDemo() {
+  clearFeed();
+  S.tableRows = {
+    1:{id:1,name:'Rahul Sharma',phone:'+91-9876543210',created_at:'2026-06-10T09:00:00Z',status:'clean'},
+    2:{id:2,name:'Jane Doe',phone:'+1-5551234567',created_at:'2026-06-10T09:01:00Z',status:'clean'},
+    3:{id:3,name:'Rohit Singh',phone:'NEEDS_CORRECTION',created_at:'2026-06-10T11:51:00Z',status:'fixed'},
+    4:{id:4,name:'UNKNOWN',phone:'NEEDS_CORRECTION',created_at:'2026-06-10T11:32:00Z',status:'fixed'},
+  };
+  renderTable();
+  const demos = [
+    {type:'fix',op:'c',ts:'11:51:36',fix_valid:true,confidence:0.95,explanation:"Name 'Rohit Sin11' is a real name with a typo — corrected to 'Rohit Singh'. Phone '935684243A' contains an invalid character — marked NEEDS_CORRECTION.",original:{id:3,name:'Rohit Sin11',phone:'935684243A',created_at:'2026-06-10T11:51:00Z'},fixed:{id:3,name:'Rohit Singh',phone:'NEEDS_CORRECTION',created_at:'2026-06-10T11:51:00Z'},fixed_fields:{name:'Rohit Singh',phone:'NEEDS_CORRECTION'},issues:["[FORMAT] 'name' value 'Rohit Sin11' does not match name pattern","[FORMAT] 'phone' value '935684243A' does not match phone pattern"]},
+    {type:'fix',op:'c',ts:'11:32:16',fix_valid:true,confidence:0.95,explanation:"Name 'J0hn!!' is pure garbage — set to UNKNOWN. Phone '99999abc' is invalid — NEEDS_CORRECTION.",original:{id:4,name:'J0hn!!',phone:'99999abc',created_at:'2026-06-10T11:32:00Z'},fixed:{id:4,name:'UNKNOWN',phone:'NEEDS_CORRECTION',created_at:'2026-06-10T11:32:00Z'},fixed_fields:{name:'UNKNOWN',phone:'NEEDS_CORRECTION'},issues:["[FORMAT] 'name' value 'J0hn!!' does not match name pattern","[FORMAT] 'phone' value '99999abc' does not match phone pattern"]},
+  ];
+  demos.forEach((d,i) => setTimeout(()=>ingestFix(d), i*500));
+}
+</script>
+</body>
+</html>
