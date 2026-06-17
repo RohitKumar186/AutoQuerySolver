@@ -411,9 +411,3 @@ Logs every fix permanently in an append-only audit table. Also feeds fixes back 
 - Human in the loop for sensitive data corrections
 - Full audit trail of every change ever made
 
----
-
-## 👨‍💻 Author
-
-**Rohit Kumar**
-GitHub: [@RohitKumar186](https://github.com/RohitKumar186)
