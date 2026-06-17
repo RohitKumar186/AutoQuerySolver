@@ -102,7 +102,7 @@ services:
     restart: always
     ports:
       - "8766:8766"
-      - "8767:8767" 
+      - "8767:8767"
     environment:
       KAFKA_BROKER: kafka:29092
       KAFKA_TOPIC: dbserver1.autoquery_db.customers
@@ -121,6 +121,53 @@ services:
     networks:
       - agent_network
 
+  # ── Worker 4 — The Checker ──────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: watchman_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - agent_network
+
+  checker_agent:
+    build:
+      context: ./worker4
+      dockerfile: Dockerfile
+    container_name: watchman_checker
+    restart: always
+    ports:
+      - "8000:8000"         # FastAPI approve/reject API
+    environment:
+      CHROMA_PATH: /chroma_data
+      DB_HOST: watchman_mysql
+      DB_PORT: "3306"
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      REDIS_URL: redis://redis:6379
+      AUTO_APPROVE_THRESHOLD: "0.80"
+      POLL_INTERVAL: "10"
+      API_HOST: "0.0.0.0"
+      API_PORT: "8000"
+      SLACK_WEBHOOK: ${SLACK_WEBHOOK}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO}
+      APPROVAL_URL: "http://localhost:8000"
+    volumes:
+      - chroma_data:/chroma_data    # shared with Worker 3 — reads fixes from here
+    depends_on:
+      - doctor_agent
+      - redis
+      - watchman_mysql
+    networks:
+      - agent_network
+
+  # ── Dashboards ──────────────────────────────────────────────────────────────
   dashboard:
     image: nginx:alpine
     container_name: watchman_dashboard
@@ -141,10 +188,20 @@ services:
     networks:
       - agent_network
 
+  checker_dashboard:
+    image: nginx:alpine
+    container_name: watchman_checker_dashboard
+    ports:
+      - "5502:80"                   # Worker 4 approval UI
+    volumes:
+      - ./worker4/checker_dashboard.html:/usr/share/nginx/html/index.html
+    networks:
+      - agent_network
+
 volumes:
   mysql_data:
   kafka_data:
-  chroma_data:    # ChromaDB persistent storage for Worker 3
+  chroma_data:    # ChromaDB persistent storage — shared by Worker 3 + Worker 4
 
 networks:
   agent_network:

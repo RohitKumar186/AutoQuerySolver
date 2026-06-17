@@ -1,0 +1,30 @@
+# Worker 4 — The Checker
+
+# ChromaDB — read fixes saved by Worker 3
+chromadb==0.5.3
+
+# Validation
+pydantic==2.7.1
+jsonschema==4.22.0
+
+# DB connection (dry-run + apply)
+sqlalchemy==2.0.30
+pymysql==1.1.0
+
+# Redis queue
+redis==5.0.4
+
+# FastAPI approval UI backend
+fastapi==0.111.0
+uvicorn==0.30.1
+websockets==12.0
+
+# HTTP client (Slack notifications)
+httpx==0.27.0
+
+# Env
+python-dotenv==1.0.1
+cryptography==42.0.8
+
+chromadb==0.5.3
+numpy<2.0
