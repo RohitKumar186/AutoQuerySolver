@@ -12,7 +12,7 @@ The system is built as a pipeline of independent workers, each doing one job:
 - **Worker 1** captures every database change in real time
 - **Worker 2** inspects each record for errors using rules + AI
 - **Worker 3** fixes the errors intelligently using Groq AI and past experience
-- **Worker 4** *(coming)* asks a human to approve sensitive fixes
+- **Worker 4** validates every fix through 3 layers, auto-approves high-confidence fixes, and routes low-confidence ones to a human approval UI
 - **Worker 5** *(coming)* safely writes the approved fix back to the database
 - **Worker 6** *(coming)* logs everything forever and makes the system smarter over time
 
@@ -30,9 +30,9 @@ Apache Kafka                    ← streams events to all workers
 Worker 2 — Inspector            ← detects anomalies (3-layer check)
         ↓  (same Kafka topic, different consumer group)
 Worker 3 — Doctor               ← AI fixes the anomalies
-        ↓
-Worker 4 — Checker  [upcoming]  ← human approves sensitive fixes
-        ↓
+        ↓  (reads fixes from ChromaDB)
+Worker 4 — Checker              ← validates + auto-approves or routes to human
+        ↓  (approved fixes only)
 Worker 5 — Fixer    [upcoming]  ← writes fix safely to database
         ↓
 Worker 6 — Diary    [upcoming]  ← logs everything, teaches the system
@@ -54,7 +54,11 @@ Worker 6 — Diary    [upcoming]  ← logs everything, teaches the system
 | Agent Framework | LangGraph |
 | Vector Memory | ChromaDB (cosine similarity) |
 | Embeddings | n-gram hash (pure Python, no API key needed) |
-| Dashboard | Vanilla HTML/JS + WebSocket (Worker 2 → port 5500, Worker 3 → port 5501) |
+| Fix Validation | JSON Schema + Pydantic v2 + SQLAlchemy dry-run |
+| Human Approval Queue | Redis |
+| Approval API | FastAPI + uvicorn |
+| Notifications | smtplib (Email) + Slack Webhook |
+| Dashboard | Vanilla HTML/JS + WebSocket (Worker 2 → port 5500, Worker 3 → port 5501, Worker 4 → port 5502) |
 | Containerization | Docker + Docker Compose |
 
 ---
@@ -69,8 +73,11 @@ Worker 6 — Diary    [upcoming]  ← logs everything, teaches the system
 | `watchman_kafka_ui` | 8080 | Kafka browser UI |
 | `watchman_inspector` | 8765 | Worker 2 WebSocket |
 | `watchman_doctor` | 8766, 8767 | Worker 3 WebSocket + HTTP API |
+| `watchman_checker` | 8000 | Worker 4 FastAPI approval API |
+| `watchman_redis` | 6379 | Redis queue (Worker 4) |
 | `watchman_dashboard` | 5500 | Worker 2 dashboard |
 | `watchman_doctor_dashboard` | 5501 | Worker 3 dashboard |
+| `watchman_checker_dashboard` | 5502 | Worker 4 approval dashboard |
 
 ---
 
@@ -91,6 +98,7 @@ cd AutoQuerySolver
 ```bash
 cp .env.example .env
 ```
+```
 DB_ROOT_PASSWORD=
 DB_NAME=
 DB_USER=
@@ -99,7 +107,14 @@ MYSQL_PORT=3307
 KAFKA_TOPIC=dbserver1.autoquery_db.customers
 GROK_API_KEY=write_your_api_key_here
 
-
+# Worker 4 — notifications
+SLACK_WEBHOOK=https://hooks.slack.com/services/...
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your_email@gmail.com
+SMTP_PASSWORD=your_app_password
+ALERT_EMAIL_TO=manager@yourcompany.com
+```
 
 ### Step 3 — Start everything
 ```bash
@@ -130,11 +145,28 @@ name:  Rohit Sin11  →  Rohit Singh       ✅ typo fixed by AI
 phone: 935684243A   →  NEEDS_CORRECTION  ⚠️  user must provide correct number
 ```
 
+### Step 7 — Watch the Checker validate it
+```bash
+docker logs -f watchman_checker
+```
+
+Expected output:
+```
+🔎 Processing fix_id=fix_3_112843
+   confidence=95% — all checks passed
+🚀 AUTO-APPROVE — written to MySQL ✅
+
+🔎 Processing fix_id=fix_4_113216
+   confidence=72% < threshold 80%
+👤 HUMAN REVIEW required — notification sent 📬
+```
+
 ### Dashboards
 | Dashboard | URL |
 |---|---|
 | Inspector (Worker 2) | http://localhost:5500 |
 | Doctor (Worker 3) | http://localhost:5501 |
+| Checker (Worker 4) | http://localhost:5502 |
 | Kafka UI | http://localhost:8080 |
 
 ---
@@ -265,15 +297,93 @@ worker3/
 
 ---
 
-## 🔜 Worker 4 — Checker Agent *(Coming)*
+## ✅ Worker 4 — Checker Agent *(Completed)*
 
-When a record has `NEEDS_CORRECTION` fields (phone, email — private data the AI cannot guess), Worker 4 will:
-- Put the fix in a queue
-- Send a notification to the user (Slack / Email)
-- Show an approval UI where the user can enter the correct value
-- Pass the approved fix to Worker 5
+Polls ChromaDB every 10 seconds for new fixes saved by Worker 3. Runs each fix through a 3-layer validation pipeline, then either auto-approves it (high confidence + all checks pass) or routes it to a human manager via Slack/Email notification and a live approval UI.
 
-**Planned tech:** FastAPI + Redis queue + Email/Slack notification
+### Validation Pipeline
+
+```
+[fetch from ChromaDB] → [Layer 1: JSON Schema] → [Layer 2: Pydantic v2] → [Layer 3: DB dry-run]
+                                                                                    ↓
+                                                              confidence ≥ 80% AND all passed?
+                                                                    ↙                    ↘
+                                                            AUTO-APPROVE            HUMAN REVIEW
+                                                         write to MySQL          Redis queue + notify
+```
+
+| Layer | File | What it checks |
+|---|---|---|
+| Layer 1 — JSON Schema | `validators/schema_validator.py` | Fix payload shape — required fields, types, enum values |
+| Layer 2 — Pydantic v2 | `validators/pydantic_models.py` | Field-level value rules — name format, phone regex, id > 0 |
+| Layer 3 — DB dry-run | `validators/db_validator.py` | Attempts a rolled-back INSERT/UPDATE against MySQL to catch constraint violations |
+| Confidence gate | `checker_agent.py` | If confidence ≥ 80% AND layers 1-3 pass → auto-approve. Otherwise → human review |
+
+### Routing Logic
+
+**AUTO-APPROVE path** (confidence ≥ 80%, all validations pass):
+- `applier.py` writes the fix directly to MySQL
+- Slack notification: "Fix applied ✅"
+- No human involvement needed
+
+**HUMAN REVIEW path** (low confidence OR validation errors):
+- Fix pushed to Redis `watchman:pending` queue
+- Slack + Email alert sent with original → fixed diff and Approve/Reject buttons
+- Fix appears in the approval dashboard (port 5502) in real time
+- Manager clicks **Approve** → `applier.py` writes to MySQL
+- Manager clicks **Reject** → fix discarded, reason logged
+
+### Approval API (port 8000)
+
+| Method | Endpoint | What it does |
+|---|---|---|
+| `GET` | `/pending` | List all fixes waiting for human decision |
+| `GET` | `/fix/{fix_id}` | Get full payload for a specific fix |
+| `POST` | `/approve/{fix_id}` | Approve a fix → immediately writes to MySQL |
+| `POST` | `/reject/{fix_id}` | Reject a fix → moves to rejected queue |
+| `GET` | `/stats` | Queue depth and Redis health |
+| `WS` | `/ws` | Live updates pushed to approval dashboard |
+
+### Dashboard (port 5502)
+- Every pending fix shown as a card: original record → fixed record diff, Groq explanation, issues, validation errors
+- **Approve** and **Reject** buttons on each card — one click, instant action
+- Live status updates via WebSocket — no page refresh needed
+- Sidebar shows pending / auto-approved / approved / rejected counts and auto-approve threshold
+
+### Sample Output
+```
+📦 Found 2 new fix(es) to process.
+
+🔎 Processing fix_id=fix_3_112843
+   op=c confidence=95% fix_valid(W3)=True
+   ✅ Layer 1 passed.   ✅ Layer 2 passed.   ✅ Layer 3 passed.
+   🚀 AUTO-APPROVE — confidence=95% ≥ threshold=80%, all checks passed.
+   ✅ Fix written to MySQL — fix_id=fix_3_112843
+
+🔎 Processing fix_id=fix_4_113216
+   op=c confidence=72% fix_valid(W3)=True
+   ✅ Layer 1 passed.   ✅ Layer 2 passed.   ✅ Layer 3 passed.
+   👤 HUMAN REVIEW required — confidence 72% < threshold 80%
+   📬 Notification sent — pending human decision.
+```
+
+### File Structure
+```
+worker4/
+├── checker_agent.py            # Main polling loop + routing logic
+├── checker_dashboard.html      # Manager approval UI (port 5502)
+├── applier.py                  # The ONLY place that writes to MySQL
+├── validators/
+│   ├── schema_validator.py     # Layer 1 — JSON Schema
+│   ├── pydantic_models.py      # Layer 2 — Pydantic v2 models
+│   └── db_validator.py         # Layer 3 — SQLAlchemy dry-run
+├── approval/
+│   ├── api.py                  # FastAPI — approve/reject endpoints + WebSocket
+│   ├── queue.py                # Redis queue (pending / approved / rejected)
+│   └── notifier.py             # Slack webhook + SMTP email alerts
+├── requirements.txt
+└── Dockerfile
+```
 
 ---
 
