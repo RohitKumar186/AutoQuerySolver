@@ -87,7 +87,7 @@ def fetch_new_fixes() -> list[dict]:
                     "original":     json.loads(meta.get("original", "{}")),
                     "issues":       json.loads(meta.get("issues",   "[]")),
                     "fixed":        json.loads(meta.get("fixed",    "{}")),
-                    "fixed_fields": json.loads(meta.get("fixed",    "{}")),
+                    "fixed_fields": json.loads(meta.get("fixed_fields", meta.get("fixed", "{}"))),
                     "explanation":  meta.get("explanation", ""),
                     "confidence":   float(meta.get("confidence", 0.0)),
                     "fix_valid":    meta.get("fix_valid", "False") == "True",
