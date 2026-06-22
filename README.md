@@ -303,14 +303,13 @@ Polls ChromaDB every 10 seconds for new fixes saved by Worker 3. Runs each fix t
 
 ### Validation Pipeline
 
-```
+
 [fetch from ChromaDB] → [Layer 1: JSON Schema] → [Layer 2: Pydantic v2] → [Layer 3: DB dry-run]
                                                                                     ↓
                                                               confidence ≥ 80% AND all passed?
                                                                     ↙                    ↘
                                                             AUTO-APPROVE            HUMAN REVIEW
                                                          write to MySQL          Redis queue + notify
-```
 
 | Layer | File | What it checks |
 |---|---|---|
@@ -351,7 +350,6 @@ Polls ChromaDB every 10 seconds for new fixes saved by Worker 3. Runs each fix t
 - Sidebar shows pending / auto-approved / approved / rejected counts and auto-approve threshold
 
 ### Sample Output
-```
 📦 Found 2 new fix(es) to process.
 
 🔎 Processing fix_id=fix_3_112843
@@ -365,10 +363,9 @@ Polls ChromaDB every 10 seconds for new fixes saved by Worker 3. Runs each fix t
    ✅ Layer 1 passed.   ✅ Layer 2 passed.   ✅ Layer 3 passed.
    👤 HUMAN REVIEW required — confidence 72% < threshold 80%
    📬 Notification sent — pending human decision.
-```
 
 ### File Structure
-```
+
 worker4/
 ├── checker_agent.py            # Main polling loop + routing logic
 ├── checker_dashboard.html      # Manager approval UI (port 5502)
@@ -383,7 +380,7 @@ worker4/
 │   └── notifier.py             # Slack webhook + SMTP email alerts
 ├── requirements.txt
 └── Dockerfile
-```
+
 
 ## 🔜 Worker 5 — Fixer Agent *(Coming)*
 
