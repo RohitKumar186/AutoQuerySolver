@@ -385,15 +385,13 @@ worker4/
 └── Dockerfile
 ```
 
----
-
 ## 🔜 Worker 5 — Fixer Agent *(Coming)*
 
 The only worker that actually writes back to MySQL. Uses SQL transactions with SAVEPOINT so if anything goes wrong, it rolls back automatically — like a video game checkpoint.
 
 **Planned tech:** SQLAlchemy + MySQL transactions + SAVEPOINT + read-back verification
 
----
+
 
 ## 🔜 Worker 6 — Diary Keeper *(Coming)*
 
@@ -401,7 +399,7 @@ Logs every fix permanently in an append-only audit table. Also feeds fixes back 
 
 **Planned tech:** MySQL audit table + Python logging + ChromaDB memory update
 
----
+
 
 ## 🎯 Project Goals
 
