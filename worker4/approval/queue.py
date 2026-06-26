@@ -144,6 +144,19 @@ class ApprovalQueue:
             return self._r.llen(QUEUE_PENDING)
         except Exception:
             return 0
+    
+    def push_to_executor(self, full_payload: dict) -> bool:
+        """Push approved fix directly to Worker 5 executor queue."""
+        if not self._r:
+            log.error("❌ Redis unavailable — cannot push to executor.")
+            return False
+        try:
+            self._r.lpush("approved_fixes", json.dumps(full_payload))
+            log.info(f"  📤 Fix pushed to Worker 5 — record_id={full_payload.get('record_id')}")
+            return True
+        except Exception as exc:
+            log.error(f"❌ push_to_executor error: {exc}")
+            return False
 
     # ── Internal ──────────────────────────────────────────────────────────────
 

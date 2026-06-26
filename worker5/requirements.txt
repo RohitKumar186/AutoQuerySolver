@@ -1,0 +1,9 @@
+# Worker 5 — The Executor
+sqlalchemy==2.0.30
+pymysql==1.1.0
+redis==5.0.4
+websockets==12.0
+python-dotenv==1.0.1
+
+# Testing
+pytest==8.2.0

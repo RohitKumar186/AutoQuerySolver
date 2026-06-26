@@ -74,6 +74,16 @@ services:
     depends_on:
       - kafka
 
+  # ── Redis — shared queue between Worker 4 and Worker 5 ──────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: watchman_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    networks:
+      - agent_network
+
   inspector_agent:
     build:
       context: ./worker2
@@ -86,7 +96,6 @@ services:
       KAFKA_BROKER: kafka:29092
       KAFKA_TOPIC: dbserver1.autoquery_db.customers
       KAFKA_GROUP: inspector-group
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
       GROK_API_KEY: ${GROK_API_KEY}
     depends_on:
       - kafka
@@ -102,18 +111,16 @@ services:
     restart: always
     ports:
       - "8766:8766"
-      - "8767:8767"
     environment:
       KAFKA_BROKER: kafka:29092
       KAFKA_TOPIC: dbserver1.autoquery_db.customers
       KAFKA_GROUP: doctor-group
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
       GROK_API_KEY: ${GROK_API_KEY}
       CHROMA_PATH: /chroma_data
       WS_PORT: "8766"
     volumes:
-      - chroma_data:/chroma_data                        # ChromaDB persistent storage
-      - ./worker2/checks:/worker2/checks                # Reuse Worker 2 rule + duplicate checks
+      - chroma_data:/chroma_data
+      - ./worker2/checks:/worker2/checks
     depends_on:
       - kafka
       - debezium
@@ -121,16 +128,7 @@ services:
     networks:
       - agent_network
 
-  # ── Worker 4 — The Checker ──────────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: watchman_redis
-    restart: always
-    ports:
-      - "6379:6379"
-    networks:
-      - agent_network
-
+  # ── Worker 4 — Checker ───────────────────────────────────────────────────────
   checker_agent:
     build:
       context: ./worker4
@@ -138,36 +136,61 @@ services:
     container_name: watchman_checker
     restart: always
     ports:
-      - "8000:8000"         # FastAPI approve/reject API
+      - "8767:8767"
     environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
       CHROMA_PATH: /chroma_data
+      WS_PORT: "8767"
+      AUTO_APPROVE_THRESHOLD: "0.80"
+      GROK_API_KEY: ${GROK_API_KEY}
+      GMAIL_USER: ${GMAIL_USER}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD}
+      NOTIFY_EMAIL: ${NOTIFY_EMAIL}
       DB_HOST: watchman_mysql
-      DB_PORT: "3306"
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME}
       DB_USER: ${DB_USER}
       DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
-      REDIS_URL: redis://redis:6379
-      AUTO_APPROVE_THRESHOLD: "0.80"
-      POLL_INTERVAL: "10"
-      API_HOST: "0.0.0.0"
-      API_PORT: "8000"
-      SLACK_WEBHOOK: ${SLACK_WEBHOOK}
-      SMTP_HOST: ${SMTP_HOST}
-      SMTP_PORT: ${SMTP_PORT}
-      SMTP_USER: ${SMTP_USER}
-      SMTP_PASSWORD: ${SMTP_PASSWORD}
-      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO}
-      APPROVAL_URL: "http://localhost:8000"
     volumes:
-      - chroma_data:/chroma_data    # shared with Worker 3 — reads fixes from here
+      - chroma_data:/chroma_data
     depends_on:
-      - doctor_agent
       - redis
-      - watchman_mysql
+      - doctor_agent
     networks:
       - agent_network
 
-  # ── Dashboards ──────────────────────────────────────────────────────────────
+      
+  # ── Worker 5 — Executor ──────────────────────────────────────────────────────
+  executor_agent:
+    build:
+      context: ./worker5
+      dockerfile: Dockerfile
+    container_name: watchman_executor
+    restart: always
+    ports:
+      - "8768:8768"
+    environment:
+      DB_HOST: watchman_mysql
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      WS_PORT: "8768"
+      BACKUP_DIR: /backups
+      BACKUP_EVERY_N: "10"
+    volumes:
+      - ./worker5/backups:/backups          # mysqldump files saved here on host
+    depends_on:
+      - watchman_mysql
+      - redis
+      - checker_agent
+    networks:
+      - agent_network
+
+  # ── Dashboards ───────────────────────────────────────────────────────────────
   dashboard:
     image: nginx:alpine
     container_name: watchman_dashboard
@@ -178,30 +201,20 @@ services:
     networks:
       - agent_network
 
-  doctor_dashboard:
+  dashboard_executor:
     image: nginx:alpine
-    container_name: watchman_doctor_dashboard
+    container_name: watchman_dashboard_executor
     ports:
       - "5501:80"
     volumes:
-      - ./worker3/doctor_dashboard.html:/usr/share/nginx/html/index.html
-    networks:
-      - agent_network
-
-  checker_dashboard:
-    image: nginx:alpine
-    container_name: watchman_checker_dashboard
-    ports:
-      - "5502:80"                   # Worker 4 approval UI
-    volumes:
-      - ./worker4/checker_dashboard.html:/usr/share/nginx/html/index.html
+      - ./worker5/dashboard/dashboard.html:/usr/share/nginx/html/index.html
     networks:
       - agent_network
 
 volumes:
   mysql_data:
   kafka_data:
-  chroma_data:    # ChromaDB persistent storage — shared by Worker 3 + Worker 4
+  chroma_data:
 
 networks:
   agent_network:

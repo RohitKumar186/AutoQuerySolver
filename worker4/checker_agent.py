@@ -229,12 +229,24 @@ def run():
                     f"  🚀 AUTO-APPROVE — confidence={confidence:.0%} "
                     f"≥ threshold={AUTO_APPROVE_THRESHOLD:.0%}, all checks passed."
                 )
-                applied = applier.apply(fix_payload)
-                if applied:
-                    log.info(f"  ✅ Fix written to MySQL — fix_id={fix_id}")
+                # Push to Redis for Worker 5 (Executor) to write to MySQL
+                redis_payload = {
+                    "record_id":    fix_payload.get("original", {}).get("id"),
+                    "table":        "customers",
+                    "fixed_record": fix_payload.get("fixed", {}),
+                    "original":     fix_payload.get("original", {}),
+                    "confidence":   confidence,
+                    "approved_by":  "AUTO",
+                    "explanation":  fix_payload.get("explanation", ""),
+                    "fix_id":       fix_id,
+                    "ts":           datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                }
+                pushed = queue.push_to_executor(redis_payload)
+                if pushed:
+                    log.info(f"  ✅ Fix pushed to Redis for Worker 5 — fix_id={fix_id}")
                     notifier.notify_applied(fix_id, fix_payload.get("original", {}).get("id", "?"))
                 else:
-                    log.error(f"  ❌ Auto-apply FAILED — fix_id={fix_id}")
+                    log.error(f"  ❌ Redis push FAILED — fix_id={fix_id}")
 
             else:
                 # ── HUMAN REVIEW PATH ─────────────────────────────────

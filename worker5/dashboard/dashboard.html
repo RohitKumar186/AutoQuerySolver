@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watchman Executor</title>
+<style>
+  :root {
+    --bg: #0d0f12;
+    --surface: #141720;
+    --surface2: #1c2030;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.13);
+    --text: #e2e4ec;
+    --muted: #6b7280;
+    --accent: #5b8ef5;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --purple: #a78bfa;
+    --cyan: #22d3ee;
+    --font: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; font-size: 13px; }
+
+  /* ── Header ── */
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .logo { font-size: 15px; font-weight: 700; letter-spacing: -0.3px; color: var(--accent); }
+  .logo span { color: var(--text); }
+  .dot-live { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+  .stat-pill { font-size: 11px; padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border2); color: var(--muted); }
+  .stat-pill b { color: var(--text); }
+  .clear-btn { font-family: var(--font); font-size: 11px; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border2); background: transparent; color: var(--muted); cursor: pointer; }
+  .clear-btn:hover { background: var(--surface2); color: var(--text); }
+
+  /* ── Layout ── */
+  .layout { display: grid; grid-template-columns: 260px 1fr; height: calc(100vh - 52px); }
+
+  /* ── Sidebar ── */
+  aside { border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
+  .aside-section { padding: 16px; border-bottom: 1px solid var(--border); }
+  .aside-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 12px; }
+  .metric-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .metric-row:last-child { margin-bottom: 0; }
+  .metric-label { color: var(--muted); font-size: 12px; }
+  .metric-val { font-size: 18px; font-weight: 700; }
+  .green { color: var(--green); } .red { color: var(--red); } .amber { color: var(--amber); } .blue { color: var(--accent); }
+
+  /* ── Feed ── */
+  main { display: flex; flex-direction: column; overflow: hidden; }
+  .feed-header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+  #event-feed { flex: 1; overflow-y: auto; padding: 0; scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+  #empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 10px; color: var(--muted); font-size: 12px; }
+  #empty-state .big { font-size: 32px; }
+
+  /* ── Event card ── */
+  .event-card { display: grid; grid-template-columns: 3px 1fr; border-bottom: 1px solid var(--border); cursor: pointer; animation: slideIn .2s ease; }
+  @keyframes slideIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:none} }
+  .event-card:hover { background: var(--surface2); }
+  .event-card.expanded { background: var(--surface2); }
+  .event-bar.success  { background: var(--green); }
+  .event-bar.rolled_back { background: var(--red); }
+  .event-bar.error    { background: var(--amber); }
+  .event-bar.backup   { background: var(--cyan); }
+
+  .event-inner { padding: 12px 16px; }
+  .event-top { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .status-badge { font-size: 9px; font-weight: 700; letter-spacing: .5px; padding: 2px 7px; border-radius: 4px; flex-shrink: 0; }
+  .badge-success  { background: rgba(34,197,94,.15); color: var(--green); }
+  .badge-rolled   { background: rgba(239,68,68,.15); color: var(--red); }
+  .badge-error    { background: rgba(245,158,11,.15); color: var(--amber); }
+  .badge-backup   { background: rgba(34,211,238,.15); color: var(--cyan); }
+  .event-id   { font-weight: 600; font-size: 13px; }
+  .event-time { margin-left: auto; font-size: 11px; color: var(--muted); }
+
+  .chip { font-size: 10px; padding: 2px 8px; border-radius: 10px; }
+  .chip-confidence { background: rgba(91,142,245,.12); color: var(--accent); border: 1px solid rgba(91,142,245,.2); }
+  .chip-auto   { background: rgba(34,197,94,.1); color: #4ade80; border: 1px solid rgba(34,197,94,.2); }
+  .chip-manual { background: rgba(167,139,250,.12); color: var(--purple); border: 1px solid rgba(167,139,250,.2); }
+
+  /* expanded detail */
+  .event-detail { padding: 0 16px 14px 16px; display: none; }
+  .event-card.expanded .event-detail { display: block; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+  .detail-block { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .detail-block-label { font-size: 10px; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .5px; }
+  .detail-kv { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px; }
+  .detail-key { color: var(--muted); }
+  .detail-v   { color: var(--text); }
+  .detail-v.ok  { color: var(--green); }
+  .detail-v.err { color: var(--red); }
+
+  /* conn bar */
+  .conn-bar { padding: 6px 20px; font-size: 11px; background: var(--surface); border-top: 1px solid var(--border); color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+  .conn-dot.err { background: var(--red); }
+
+  /* backup tag */
+  .backup-tag { padding: 5px 10px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border2); font-size: 10px; color: var(--cyan); word-break: break-all; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">watch<span>man</span></div>
+  <div class="dot-live" id="live-dot"></div>
+  <span style="font-size:11px;color:var(--muted)">Executor</span>
+  <div class="header-right">
+    <div class="stat-pill">Total: <b id="h-total">0</b></div>
+    <div class="stat-pill">Success: <b id="h-success" style="color:var(--green)">0</b></div>
+    <div class="stat-pill">Rolled Back: <b id="h-rolled" style="color:var(--red)">0</b></div>
+    <button class="clear-btn" onclick="clearFeed()">Clear</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="aside-section">
+      <div class="aside-label">Overview</div>
+      <div class="metric-row"><span class="metric-label">Total executed</span><span class="metric-val blue" id="s-total">0</span></div>
+      <div class="metric-row"><span class="metric-label">Success</span><span class="metric-val green" id="s-success">0</span></div>
+      <div class="metric-row"><span class="metric-label">Rolled back</span><span class="metric-val red" id="s-rolled">0</span></div>
+      <div class="metric-row"><span class="metric-label">Errors</span><span class="metric-val amber" id="s-errors">0</span></div>
+    </div>
+    <div class="aside-section">
+      <div class="aside-label">Approvals</div>
+      <div class="metric-row"><span class="metric-label">Auto approved</span><span class="metric-val green" id="s-auto">0</span></div>
+      <div class="metric-row"><span class="metric-label">Human approved</span><span class="metric-val" style="color:var(--purple)" id="s-human">0</span></div>
+    </div>
+    <div class="aside-section" style="flex:1">
+      <div class="aside-label">Last backup</div>
+      <div class="backup-tag" id="last-backup">None yet</div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="feed-header">
+      <span>Execution Feed</span>
+      <input type="text" id="search-box" placeholder="Search by id, status, field…"
+        style="font-family:var(--font);font-size:12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:5px 10px;outline:none;width:220px;margin-left:auto"
+        oninput="renderFeed()">
+    </div>
+    <div id="event-feed">
+      <div id="empty-state">
+        <span class="big">⚡</span>
+        <span>Waiting for executions…</span>
+        <span style="font-size:11px">Worker 5 will write approved fixes here</span>
+      </div>
+    </div>
+    <div class="conn-bar">
+      <div class="conn-dot err" id="ws-dot"></div>
+      <span id="ws-status">Connecting to ws://localhost:8768 …</span>
+    </div>
+  </main>
+</div>
+
+<script>
+const state = {
+  events: [],
+  counts: { total:0, success:0, rolled:0, errors:0, auto:0, human:0 }
+};
+
+function ingestEvent(ev) {
+  state.events.unshift(ev);
+
+  if (ev.type === "execution") {
+    state.counts.total++;
+    if (ev.status === "SUCCESS")      state.counts.success++;
+    if (ev.status === "ROLLED_BACK")  state.counts.rolled++;
+    if (ev.status === "ERROR")        state.counts.errors++;
+    if (ev.approved_by === "AUTO")    state.counts.auto++;
+    else if (ev.approved_by)          state.counts.human++;
+  }
+
+  if (ev.type === "backup" && ev.filepath) {
+    document.getElementById("last-backup").textContent = ev.filepath;
+  }
+
+  updateCounters();
+  renderFeed();
+}
+
+function updateCounters() {
+  const c = state.counts;
+  document.getElementById("h-total").textContent   = c.total;
+  document.getElementById("h-success").textContent = c.success;
+  document.getElementById("h-rolled").textContent  = c.rolled;
+  document.getElementById("s-total").textContent   = c.total;
+  document.getElementById("s-success").textContent = c.success;
+  document.getElementById("s-rolled").textContent  = c.rolled;
+  document.getElementById("s-errors").textContent  = c.errors;
+  document.getElementById("s-auto").textContent    = c.auto;
+  document.getElementById("s-human").textContent   = c.human;
+}
+
+function renderFeed() {
+  const feed  = document.getElementById("event-feed");
+  const q     = document.getElementById("search-box").value.toLowerCase();
+  let   evs   = state.events.filter(ev => !q || JSON.stringify(ev).toLowerCase().includes(q));
+
+  if (evs.length === 0) {
+    feed.innerHTML = state.events.length === 0
+      ? `<div id="empty-state"><span class="big">⚡</span><span>Waiting for executions…</span><span style="font-size:11px">Worker 5 will write approved fixes here</span></div>`
+      : `<div id="empty-state"><span class="big">○</span><span>No matching events</span></div>`;
+    return;
+  }
+
+  feed.innerHTML = "";
+  evs.forEach((ev, i) => feed.appendChild(buildCard(ev, i)));
+}
+
+function buildCard(ev, idx) {
+  const card = document.createElement("div");
+  card.className = "event-card";
+  card.onclick   = () => card.classList.toggle("expanded");
+
+  if (ev.type === "backup") {
+    const barClass = ev.success ? "backup" : "error";
+    card.innerHTML = `
+      <div class="event-bar ${barClass}"></div>
+      <div class="event-inner">
+        <div class="event-top">
+          <span class="status-badge badge-backup">BACKUP</span>
+          <span class="event-id">${ev.success ? "✅ Snapshot taken" : "❌ Backup failed"}</span>
+          <span class="event-time">${ev.ts || ""}</span>
+        </div>
+        <span style="font-size:10px;color:var(--muted)">${ev.filepath || ""} ${ev.size_kb ? "(" + ev.size_kb + " KB)" : ""}</span>
+      </div>`;
+    return card;
+  }
+
+  const status    = (ev.status || "").toLowerCase();
+  const barClass  = status === "success" ? "success" : status === "rolled_back" ? "rolled_back" : "error";
+  const badgeCls  = status === "success" ? "badge-success" : status === "rolled_back" ? "badge-rolled" : "badge-error";
+  const badgeTxt  = status === "success" ? "SUCCESS" : status === "rolled_back" ? "ROLLED BACK" : "ERROR";
+  const appBy     = ev.approved_by || "?";
+  const appChip   = appBy === "AUTO"
+    ? `<span class="chip chip-auto">AUTO</span>`
+    : `<span class="chip chip-manual">HUMAN: ${appBy}</span>`;
+  const conf      = ev.confidence ? `<span class="chip chip-confidence">conf: ${ev.confidence}</span>` : "";
+
+  // Build applied fields display
+  const applied = ev.applied || {};
+  const original = ev.original || {};
+  const appliedRows = Object.entries(applied).map(([k,v]) => `
+    <div class="detail-kv">
+      <span class="detail-key">${k}</span>
+      <span class="detail-v ok">${v}</span>
+    </div>`).join("");
+  const originalRows = Object.entries(original).map(([k,v]) => `
+    <div class="detail-kv">
+      <span class="detail-key">${k}</span>
+      <span class="detail-v">${v ?? "<null>"}</span>
+    </div>`).join("");
+
+  card.innerHTML = `
+    <div class="event-bar ${barClass}"></div>
+    <div>
+      <div class="event-inner">
+        <div class="event-top">
+          <span class="status-badge ${badgeCls}">${badgeTxt}</span>
+          <span class="event-id">Record #${ev.record_id ?? "?"}</span>
+          <span class="event-time">${ev.ts || ""}</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${appChip}${conf}</div>
+      </div>
+      <div class="event-detail">
+        <div class="detail-grid">
+          <div class="detail-block">
+            <div class="detail-block-label">Original record</div>
+            ${originalRows || '<span style="color:var(--muted);font-size:11px">not available</span>'}
+          </div>
+          <div class="detail-block">
+            <div class="detail-block-label">Applied fix</div>
+            ${appliedRows || '<span style="color:var(--muted);font-size:11px">nothing applied</span>'}
+          </div>
+        </div>
+        <div class="detail-block" style="margin-bottom:8px">
+          <div class="detail-block-label">Execution details</div>
+          <div class="detail-kv"><span class="detail-key">Status</span><span class="detail-v ${status==='success'?'ok':'err'}">${ev.status}</span></div>
+          <div class="detail-kv"><span class="detail-key">Verified</span><span class="detail-v ${ev.verified?'ok':'err'}">${ev.verified}</span></div>
+          <div class="detail-kv"><span class="detail-key">Approved by</span><span class="detail-v">${appBy}</span></div>
+          <div class="detail-kv"><span class="detail-key">Reason</span><span class="detail-v" style="max-width:300px;text-align:right">${ev.reason || ev.explanation || "—"}</span></div>
+          ${ev.last_backup ? `<div class="detail-kv"><span class="detail-key">Backup</span><span class="detail-v" style="font-size:10px">${ev.last_backup}</span></div>` : ""}
+        </div>
+      </div>
+    </div>`;
+  return card;
+}
+
+function clearFeed() {
+  state.events = [];
+  state.counts = { total:0, success:0, rolled:0, errors:0, auto:0, human:0 };
+  updateCounters();
+  renderFeed();
+}
+
+// ── WebSocket connection ───────────────────────────────────────────────────────
+let ws = null;
+function connectWS(url) {
+  ws = new WebSocket(url);
+  ws.onopen = () => {
+    document.getElementById("ws-status").textContent = "Connected to " + url;
+    document.getElementById("ws-dot").classList.remove("err");
+  };
+  ws.onmessage = e => {
+    try { ingestEvent(JSON.parse(e.data)); } catch(_) {}
+  };
+  ws.onclose = () => {
+    document.getElementById("ws-status").textContent = "Disconnected — retrying…";
+    document.getElementById("ws-dot").classList.add("err");
+    setTimeout(() => connectWS(url), 3000);
+  };
+  ws.onerror = () => { document.getElementById("ws-dot").classList.add("err"); };
+}
+
+connectWS("ws://localhost:8768");
+</script>
+</body>
+</html>
