@@ -211,6 +211,48 @@ services:
     networks:
       - agent_network
 
+  # worker 6
+
+  logger_agent:
+    build:
+      context: ./worker6
+      dockerfile: Dockerfile
+    container_name: watchman_logger
+    restart: always
+    ports:
+      - "8769:8769"   # WebSocket
+      - "8770:8770"   # FastAPI
+    environment:
+      KAFKA_BROKER: kafka:29092
+      KAFKA_TOPIC: dbserver1.autoquery_db.customers
+      KAFKA_GROUP: logger-group
+      GROK_API_KEY: ${GROK_API_KEY}
+      DB_HOST: watchman_mysql
+      DB_PORT: 3306
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      CHROMA_PATH: /chroma_data
+    volumes:
+      - chroma_data:/chroma_data
+    depends_on:
+      - kafka
+      - watchman_mysql
+      - doctor_agent
+    networks:
+      - agent_network
+
+  logger_dashboard:
+    image: nginx:alpine
+    container_name: watchman_logger_dashboard
+    ports:
+      - "5503:80"
+    volumes:
+      - ./worker6/dashboard/dashboard.html:/usr/share/nginx/html/index.html
+      - ./worker6/dashboard/nginx.conf:/etc/nginx/conf.d/default.conf
+    networks:
+      - agent_network
+
 volumes:
   mysql_data:
   kafka_data:

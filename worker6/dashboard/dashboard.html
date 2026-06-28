@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Watchman — Audit Logger</title>
+<style>
+  :root {
+    --bg: #0d0f12;
+    --surface: #141720;
+    --surface2: #1c2030;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.13);
+    --text: #e2e4ec;
+    --muted: #6b7280;
+    --accent: #5b8ef5;
+    --green: #22c55e;
+    --red: #ef4444;
+    --amber: #f59e0b;
+    --purple: #a78bfa;
+    --cyan: #22d3ee;
+    --font: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; font-size: 13px; }
+
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .logo { font-size: 15px; font-weight: 700; letter-spacing: -0.3px; color: var(--accent); }
+  .logo span { color: var(--text); }
+  .dot-live { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  .stat-pill { font-size: 11px; padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border2); color: var(--muted); }
+  .stat-pill b { color: var(--text); }
+  .btn { font-family: var(--font); font-size: 11px; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border2); background: transparent; color: var(--muted); cursor: pointer; transition: all .15s; }
+  .btn:hover { background: var(--surface2); color: var(--text); }
+
+  /* Stats row */
+  .stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
+  .stat-card { background: var(--surface); padding: 16px 20px; }
+  .stat-card .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 6px; }
+  .stat-card .val { font-size: 24px; font-weight: 700; }
+  .val.blue { color: var(--accent); }
+  .val.green { color: var(--green); }
+  .val.red { color: var(--red); }
+  .val.amber { color: var(--amber); }
+  .val.purple { color: var(--purple); }
+
+  /* Layout */
+  .layout { display: grid; grid-template-columns: 1fr 320px; height: calc(100vh - 52px - 73px); }
+
+  /* Feed */
+  main { display: flex; flex-direction: column; overflow: hidden; }
+  .feed-header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+  .feed-header input { font-family: var(--font); font-size: 12px; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 5px 10px; outline: none; width: 200px; }
+  .feed-header input:focus { border-color: var(--accent); }
+  #audit-feed { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+
+  /* Audit card */
+  .audit-card { display: grid; grid-template-columns: 3px 1fr; border-bottom: 1px solid var(--border); animation: slideIn .2s ease; cursor: pointer; transition: background .1s; }
+  .audit-card:hover { background: var(--surface2); }
+  .audit-card.expanded { background: var(--surface2); }
+  @keyframes slideIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:none} }
+  .abar { }
+  .abar.valid { background: var(--green); }
+  .abar.invalid { background: var(--amber); }
+  .abar.clean { background: var(--accent); }
+  .ainner { padding: 10px 14px; }
+  .atop { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+  .op-badge { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 4px; }
+  .op-c { background: rgba(34,197,94,.15); color: var(--green); }
+  .op-u { background: rgba(245,158,11,.15); color: var(--amber); }
+  .op-d { background: rgba(239,68,68,.15); color: var(--red); }
+  .aname { font-weight: 600; font-size: 13px; }
+  .atime { margin-left: auto; font-size: 10px; color: var(--muted); }
+  .arow2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .chip { font-size: 10px; padding: 2px 8px; border-radius: 10px; }
+  .chip-valid  { background: rgba(34,197,94,.1); color: #4ade80; border: 1px solid rgba(34,197,94,.2); }
+  .chip-invalid { background: rgba(245,158,11,.1); color: #fbbf24; border: 1px solid rgba(245,158,11,.2); }
+  .chip-auto   { background: rgba(91,142,245,.1); color: var(--accent); border: 1px solid rgba(91,142,245,.2); }
+  .chip-human  { background: rgba(167,139,250,.1); color: var(--purple); border: 1px solid rgba(167,139,250,.2); }
+  .chip-conf   { background: rgba(34,211,238,.1); color: var(--cyan); border: 1px solid rgba(34,211,238,.2); }
+
+  .audit-detail { padding: 0 14px 12px; display: none; }
+  .audit-card.expanded .audit-detail { display: block; }
+  .detail-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+  .dblock { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  .dblock-label { font-size: 10px; color: var(--muted); text-transform: uppercase; margin-bottom: 5px; letter-spacing: .5px; }
+  .dkv { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 3px; }
+  .dk { color: var(--muted); }
+  .dv { color: var(--text); }
+  .dv.ok { color: var(--green); }
+  .dv.warn { color: var(--amber); }
+
+  /* Sidebar */
+  aside { border-left: 1px solid var(--border); background: var(--surface); overflow-y: auto; }
+  .aside-section { padding: 14px; border-bottom: 1px solid var(--border); }
+  .aside-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin-bottom: 10px; }
+  .report-line { font-size: 12px; color: var(--text); margin-bottom: 6px; line-height: 1.5; }
+  .narrative { font-size: 11px; color: var(--muted); line-height: 1.6; }
+  .issue-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .ib-label { width: 70px; font-size: 10px; color: var(--muted); text-align: right; flex-shrink: 0; }
+  .ib-track { flex: 1; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .ib-fill { height: 100%; border-radius: 3px; transition: width .4s; }
+  .ib-count { font-size: 10px; color: var(--muted); min-width: 20px; text-align: right; }
+  .api-link { display: block; font-size: 11px; color: var(--accent); margin-bottom: 4px; text-decoration: none; }
+  .api-link:hover { text-decoration: underline; }
+
+  .conn-bar { padding: 6px 16px; font-size: 11px; background: var(--surface); border-top: 1px solid var(--border); color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+  .conn-dot.err { background: var(--red); }
+
+  #empty { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 8px; color: var(--muted); font-size: 12px; }
+  #empty .big { font-size: 32px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">watch<span>man</span></div>
+  <div class="dot-live"></div>
+  <span style="font-size:11px;color:var(--muted)">Audit Logger</span>
+  <div class="header-right">
+    <div class="stat-pill">Logged: <b id="h-total">0</b></div>
+    <div class="stat-pill">Valid fixes: <b id="h-valid" style="color:var(--green)">0</b></div>
+    <div class="stat-pill">Memory: <b id="h-memory" style="color:var(--purple)">0</b></div>
+    <button class="btn" onclick="clearFeed()">Clear</button>
+    <button class="btn" onclick="loadDemo()">Demo</button>
+  </div>
+</header>
+
+<!-- Stats row -->
+<div class="stats-row">
+  <div class="stat-card"><div class="label">Total logged</div><div class="val blue" id="s-total">0</div></div>
+  <div class="stat-card"><div class="label">Valid fixes</div><div class="val green" id="s-valid">0</div></div>
+  <div class="stat-card"><div class="label">Invalid fixes</div><div class="val amber" id="s-invalid">0</div></div>
+  <div class="stat-card"><div class="label">Avg confidence</div><div class="val purple" id="s-conf">—</div></div>
+  <div class="stat-card"><div class="label">Memory entries</div><div class="val" style="color:var(--cyan)" id="s-memory">0</div></div>
+</div>
+
+<div class="layout">
+  <main>
+    <div class="feed-header">
+      <input id="search-box" type="text" placeholder="Search by name, field, issue…" oninput="renderFeed()">
+      <span style="margin-left:auto">Audit log — live feed</span>
+    </div>
+    <div id="audit-feed">
+      <div id="empty">
+        <span class="big">◈</span>
+        <span>Waiting for fix events…</span>
+        <span style="font-size:11px">Worker 5 → audit_log → here</span>
+      </div>
+    </div>
+    <div class="conn-bar">
+      <div class="conn-dot" id="ws-dot"></div>
+      <span id="ws-status">Connecting to ws://localhost:8769 …</span>
+    </div>
+  </main>
+
+  <aside>
+    <!-- Report summary -->
+    <div class="aside-section">
+      <div class="aside-label">Latest report</div>
+      <div class="report-line">Fix rate: <b id="r-rate">—</b></div>
+      <div class="report-line">Auto approved: <b id="r-auto">0</b></div>
+      <div class="report-line">Human approved: <b id="r-human">0</b></div>
+      <div class="narrative" id="r-narrative">No events yet.</div>
+    </div>
+
+    <!-- Issue type breakdown -->
+    <div class="aside-section">
+      <div class="aside-label">Issue types</div>
+      <div id="issue-bars"></div>
+    </div>
+
+    <!-- API links -->
+    <div class="aside-section">
+      <div class="aside-label">Audit API</div>
+      <a class="api-link" href="http://localhost:8770/api/v1/audit" target="_blank">GET /audit</a>
+      <a class="api-link" href="http://localhost:8770/api/v1/stats" target="_blank">GET /stats</a>
+      <a class="api-link" href="http://localhost:8770/api/v1/report" target="_blank">GET /report</a>
+      <a class="api-link" href="http://localhost:8770/api/v1/memory" target="_blank">GET /memory</a>
+      <a class="api-link" href="http://localhost:8770/docs" target="_blank">Swagger docs</a>
+    </div>
+
+    <!-- Memory counter -->
+    <div class="aside-section">
+      <div class="aside-label">ChromaDB self-learning</div>
+      <div class="report-line">Fix pairs stored: <b id="r-memory" style="color:var(--purple)">0</b></div>
+      <div class="narrative">Every confirmed fix teaches Worker 3 to make better corrections.</div>
+    </div>
+  </aside>
+</div>
+
+<script>
+const state = { events: [], counts: { total:0, valid:0, invalid:0, memory:0 }, liveStats: {}, issueCounts: {} };
+
+function ingestEvent(ev) {
+  if (ev.type !== 'audit_event') return;
+  const row = ev.audit_row || {};
+  state.events.unshift(row);
+
+  const ls = ev.live_stats || {};
+  state.counts.total   = ls.total  || state.counts.total + 1;
+  state.counts.valid   = ls.valid  || state.counts.valid;
+  state.counts.memory  = ls.memory || state.counts.memory;
+  state.liveStats      = ls;
+
+  const issues = Array.isArray(row.issues) ? row.issues : [];
+  issues.forEach(i => {
+    const tag = i.includes(']') ? i.split(']')[0].replace('[','') : 'OTHER';
+    state.issueCounts[tag] = (state.issueCounts[tag] || 0) + 1;
+  });
+
+  updateStats();
+  renderFeed();
+  renderSidebar(ev);
+}
+
+function updateStats() {
+  const ls = state.liveStats;
+  document.getElementById('h-total').textContent  = ls.total   || state.counts.total;
+  document.getElementById('h-valid').textContent  = ls.valid   || state.counts.valid;
+  document.getElementById('h-memory').textContent = ls.memory  || state.counts.memory;
+  document.getElementById('s-total').textContent  = ls.total   || state.counts.total;
+  document.getElementById('s-valid').textContent  = ls.valid   || state.counts.valid;
+  document.getElementById('s-invalid').textContent= (ls.total||0) - (ls.valid||0);
+  document.getElementById('s-conf').textContent   = ls.avg_conf != null ? ls.avg_conf.toFixed(2) : '—';
+  document.getElementById('s-memory').textContent = ls.memory  || state.counts.memory;
+}
+
+function renderSidebar(ev) {
+  const ls = ev.live_stats || {};
+  const total = ls.total || 1;
+  document.getElementById('r-rate').textContent  = ls.valid != null ? Math.round(ls.valid/total*100)+'%' : '—';
+  document.getElementById('r-auto').textContent  = ls.auto_app  || 0;
+  document.getElementById('r-human').textContent = ls.human_app || 0;
+  document.getElementById('r-memory').textContent= ls.memory    || 0;
+  document.getElementById('r-memory2') && (document.getElementById('r-memory2').textContent = ls.memory || 0);
+
+  const ic  = state.issueCounts;
+  const max = Math.max(...Object.values(ic), 1);
+  const bars = document.getElementById('issue-bars');
+  bars.innerHTML = Object.entries(ic).map(([tag, cnt]) =>
+    `<div class="issue-bar">
+      <span class="ib-label">${tag}</span>
+      <div class="ib-track"><div class="ib-fill" style="width:${Math.round(cnt/max*100)}%;background:var(--red)"></div></div>
+      <span class="ib-count">${cnt}</span>
+    </div>`
+  ).join('') || '<span style="font-size:11px;color:var(--muted)">None yet</span>';
+}
+
+function renderFeed() {
+  const feed = document.getElementById('audit-feed');
+  const q    = document.getElementById('search-box').value.toLowerCase();
+  let evs    = state.events;
+  if (q) evs = evs.filter(e => JSON.stringify(e).toLowerCase().includes(q));
+
+  if (evs.length === 0) {
+    feed.innerHTML = `<div id="empty"><span class="big">◈</span><span>${state.events.length?'No matches':'Waiting for fix events…'}</span></div>`;
+    return;
+  }
+  feed.innerHTML = '';
+  evs.forEach((row, i) => feed.appendChild(buildCard(row, i)));
+}
+
+function buildCard(row, idx) {
+  const valid     = row.fix_valid;
+  const op        = row.op || '?';
+  const opLabel   = {c:'INSERT',u:'UPDATE',d:'DELETE'}[op] || op.toUpperCase();
+  const opClass   = {c:'op-c',u:'op-u',d:'op-d'}[op] || 'op-u';
+  const barClass  = valid ? 'valid' : 'invalid';
+  const approvedBy= row.approved_by || 'unknown';
+  const conf      = row.confidence  != null ? parseFloat(row.confidence).toFixed(2) : '—';
+  const original  = row.original    || {};
+  const fixed     = row.fixed       || {};
+  const issues    = Array.isArray(row.issues) ? row.issues : [];
+
+  const name = (original.name || fixed.name || `record #${row.record_id || idx}`);
+
+  const kvRows = Object.entries(fixed).map(([k,v]) =>
+    `<div class="dkv"><span class="dk">${k}</span><span class="dv">${esc(v)}</span></div>`
+  ).join('');
+
+  const issueRows = issues.map(i =>
+    `<div style="font-size:11px;color:var(--red);margin-bottom:3px">⚠ ${esc(i)}</div>`
+  ).join('');
+
+  const card = document.createElement('div');
+  card.className = 'audit-card';
+  card.onclick = () => card.classList.toggle('expanded');
+  card.innerHTML = `
+    <div class="abar ${barClass}"></div>
+    <div>
+      <div class="ainner">
+        <div class="atop">
+          <span class="op-badge ${opClass}">${opLabel}</span>
+          <span class="aname">${esc(name)}</span>
+          <span class="atime">${row.ts || ''}</span>
+        </div>
+        <div class="arow2">
+          <span class="chip ${valid?'chip-valid':'chip-invalid'}">${valid?'✓ valid fix':'⚠ partial fix'}</span>
+          <span class="chip ${approvedBy==='auto'?'chip-auto':'chip-human'}">${approvedBy==='auto'?'auto-approved':'human-approved'}</span>
+          <span class="chip chip-conf">conf ${conf}</span>
+          ${issues.length?`<span class="chip chip-invalid">${issues.length} issue(s)</span>`:''}
+        </div>
+      </div>
+      <div class="audit-detail">
+        <div class="detail-grid2">
+          <div class="dblock">
+            <div class="dblock-label">Fixed record</div>
+            ${kvRows || '<span style="color:var(--muted);font-size:11px">no fields</span>'}
+          </div>
+          <div class="dblock">
+            <div class="dblock-label">Audit metadata</div>
+            <div class="dkv"><span class="dk">audit_id</span><span class="dv">${row.id || '—'}</span></div>
+            <div class="dkv"><span class="dk">record_id</span><span class="dv">${row.record_id || '—'}</span></div>
+            <div class="dkv"><span class="dk">worker</span><span class="dv">${row.worker || '—'}</span></div>
+            <div class="dkv"><span class="dk">fix_valid</span><span class="dv ${valid?'ok':'warn'}">${valid}</span></div>
+            <div class="dkv"><span class="dk">confidence</span><span class="dv">${conf}</span></div>
+            <div class="dkv"><span class="dk">approved_by</span><span class="dv">${approvedBy}</span></div>
+          </div>
+        </div>
+        ${issueRows?`<div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:5px">Issues</div>${issueRows}`:''}
+        ${row.explanation?`<div style="font-size:11px;color:var(--muted);margin-top:6px;font-style:italic">${esc(row.explanation)}</div>`:''}
+      </div>
+    </div>`;
+  return card;
+}
+
+function esc(s) { return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function clearFeed() { state.events=[]; state.counts={total:0,valid:0,invalid:0,memory:0}; state.issueCounts={}; updateStats(); renderFeed(); }
+
+/* WebSocket */
+let ws = null;
+function connectWS(url) {
+  ws = new WebSocket(url);
+  ws.onopen = () => {
+    document.getElementById('ws-status').textContent = 'Connected to ' + url;
+    document.getElementById('ws-dot').classList.remove('err');
+  };
+  ws.onmessage = e => { try { ingestEvent(JSON.parse(e.data)); } catch(_) {} };
+  ws.onclose = () => {
+    document.getElementById('ws-status').textContent = 'Disconnected — retrying…';
+    document.getElementById('ws-dot').classList.add('err');
+    setTimeout(() => connectWS(url), 3000);
+  };
+  ws.onerror = () => document.getElementById('ws-dot').classList.add('err');
+}
+connectWS('ws://localhost:8769');
+
+/* Demo */
+function loadDemo() {
+  clearFeed();
+  const demo = [
+    { type:'audit_event', audit_row:{ id:1, worker:'worker5', op:'u', record_id:3, original:{id:3,name:'R4hul $hmara',phone:'not-a-phone'}, fixed:{id:3,name:'Rahul Sharma',phone:'UNKNOWN'}, issues:['[FORMAT] name does not match pattern','[FORMAT] phone does not match pattern'], confidence:0.92, fix_valid:true, approved_by:'auto', explanation:'Fixed typo in name; phone set to UNKNOWN (garbage value)', ts:'18:30:01' }, live_stats:{total:1,valid:1,avg_conf:0.92,auto_app:1,human_app:0,memory:1} },
+    { type:'audit_event', audit_row:{ id:2, worker:'worker5', op:'u', record_id:5, original:{id:5,name:'Rohit Sin11',phone:'+91-9876543210'}, fixed:{id:5,name:'Rohit Singh',phone:'+91-9876543210'}, issues:['[FORMAT] name does not match pattern'], confidence:0.88, fix_valid:true, approved_by:'swayam@example.com', explanation:'Fixed typo: Sin11 → Singh', ts:'18:30:15' }, live_stats:{total:2,valid:2,avg_conf:0.90,auto_app:1,human_app:1,memory:2} },
+    { type:'audit_event', audit_row:{ id:3, worker:'worker5', op:'u', record_id:7, original:{id:7,name:'B@d Us3r!',phone:'abc'}, fixed:{id:7,name:'UNKNOWN',phone:'UNKNOWN'}, issues:['[FORMAT] name does not match pattern','[FORMAT] phone does not match pattern'], confidence:0.60, fix_valid:false, approved_by:'auto', explanation:'Both fields garbage — set to UNKNOWN', ts:'18:30:42' }, live_stats:{total:3,valid:2,avg_conf:0.80,auto_app:2,human_app:1,memory:2} },
+  ];
+  demo.forEach((ev, i) => setTimeout(() => ingestEvent(ev), i * 300));
+}
+</script>
+</body>
+</html>

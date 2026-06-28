@@ -1,0 +1,24 @@
+# Worker 6 — The Logger / Auditor
+kafka-python==2.0.2
+python-dotenv==1.0.1
+
+# WebSocket server (dashboard broadcast)
+websockets==12.0
+
+# LangGraph — pipeline state machine
+langgraph==0.2.28
+langchain-core==0.3.15
+
+# MySQL — audit log storage
+sqlalchemy==2.0.30
+pymysql==1.1.0
+
+# FastAPI — audit REST API
+fastapi==0.111.0
+uvicorn==0.29.0
+
+cryptography==42.0.5
+
+# ChromaDB — self-learning memory (same version as Worker 3)
+chromadb==0.5.3
+numpy<2.0
