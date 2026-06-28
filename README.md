@@ -15,7 +15,7 @@ The system is built as a pipeline of independent workers, each doing one job:
 - **Worker 3** fixes the errors intelligently using Groq AI and past experience
 - **Worker 4** validates every fix through 3 layers, auto-approves high-confidence fixes, and routes low-confidence ones to a human approval UI
 - **Worker 5** safely writes the approved fix back to the database with SAVEPOINT transactions + read-back verification
-- **Worker 6** *(coming)* logs everything forever and makes the system smarter over time
+- **Worker 6** logs everything forever in an append-only audit table and makes the system smarter over time via ChromaDB self-learning
 
 ---
 
@@ -35,8 +35,8 @@ Worker 3 — Doctor               ← AI fixes the anomalies
 Worker 4 — Checker              ← validates + auto-approves or routes to human
         ↓  (approved fixes pushed to Redis)
 Worker 5 — Executor             ← writes fix safely to database (SAVEPOINT + read-back)
-        ↓
-Worker 6 — Diary    [upcoming]  ← logs everything, teaches the system
+        ↓  (Debezium captures the write → Kafka again)
+Worker 6 — Logger               ← logs everything to audit_log + updates ChromaDB memory
 ```
 
 ---
@@ -59,8 +59,9 @@ Worker 6 — Diary    [upcoming]  ← logs everything, teaches the system
 | Human Approval Queue | Redis |
 | Approval API | FastAPI + uvicorn |
 | DB Write Safety | SQLAlchemy + SAVEPOINT + read-back verification + mysqldump |
+| Audit Logging | SQLAlchemy → MySQL audit_log table (append-only) |
 | Notifications | smtplib (Email) + Slack Webhook |
-| Dashboard | Vanilla HTML/JS + WebSocket (W2 → 5500, W3 → 5501, W4 → 5502, W5 → 5503) |
+| Dashboard | Vanilla HTML/JS + WebSocket |
 | Containerization | Docker + Docker Compose |
 
 ---
@@ -78,19 +79,21 @@ Worker 6 — Diary    [upcoming]  ← logs everything, teaches the system
 | `watchman_checker` | 8000 | Worker 4 FastAPI approval API |
 | `watchman_redis` | 6379 | Redis queue (Workers 4 & 5) |
 | `watchman_executor` | 8768 | Worker 5 WebSocket |
-| `watchman_dashboard` | 5500 | Worker 2 dashboard |
-| `watchman_doctor_dashboard` | 5501 | Worker 3 dashboard |
-| `watchman_checker_dashboard` | 5502 | Worker 4 approval dashboard |
-| `watchman_dashboard_executor` | 5503 | Worker 5 executor dashboard |
+| `watchman_logger` | 8769, 8770 | Worker 6 WebSocket + Audit REST API |
+| `watchman_dashboard` | 5500 | Worker 2 Inspector dashboard |
+| `watchman_doctor_dashboard` | 5501 | Worker 3 Doctor dashboard |
+| `watchman_checker_dashboard` | 5502 | Worker 4 Approval dashboard |
+| `watchman_dashboard_executor` | 5503 | Worker 5 Executor dashboard |
+| `watchman_logger_dashboard` | 5504 | Worker 6 Audit Logger dashboard |
 
 ---
 
 ## ⚙️ Quick Start
 
 ### Prerequisites
-- Docker Desktop
-- Git
-- Groq API key → https://console.groq.com
+- Docker Desktop → https://www.docker.com/products/docker-desktop
+- Git → https://git-scm.com
+- Groq API key → https://console.groq.com (free)
 
 ### Step 1 — Clone
 ```bash
@@ -102,16 +105,18 @@ cd AutoQuerySolver
 ```bash
 cp .env.example .env
 ```
-```
-DB_ROOT_PASSWORD=
-DB_NAME=
-DB_USER=
-DB_PASSWORD=
+
+Open `.env` and fill in your values:
+```env
+DB_ROOT_PASSWORD=your_root_password
+DB_NAME=autoquery_db
+DB_USER=solver_admin
+DB_PASSWORD=your_db_password
 MYSQL_PORT=3307
 KAFKA_TOPIC=dbserver1.autoquery_db.customers
-GROK_API_KEY=write_your_api_key_here
+GROK_API_KEY=your_groq_api_key_here
 
-# Worker 4 — notifications
+# Worker 4 — notifications (optional)
 SLACK_WEBHOOK=https://hooks.slack.com/services/...
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
@@ -126,71 +131,63 @@ BACKUP_EVERY_N=10
 
 ### Step 3 — Start everything
 ```bash
-docker compose up -d
+docker compose up --build -d
 ```
+> First run takes 15-20 minutes. All images are downloaded fresh.
 
 ### Step 4 — Register Debezium connector
+
+**Linux / Mac / Git Bash:**
 ```bash
 curl -X POST "http://localhost:8083/connectors" \
   -H "Content-Type: application/json" \
   -d @config/debezium-connector.json
 ```
 
-### Step 5 — Test it
+**Windows PowerShell:**
+```powershell
+$body = Get-Content -Raw "config/debezium-connector.json"
+Invoke-WebRequest -Uri "http://localhost:8083/connectors" `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body $body `
+  -UseBasicParsing
+```
+
+### Step 5 — Verify all containers
 ```bash
-docker exec -it watchman_mysql mysql -uroot -pYour_Password autoquery_db -e \
+docker compose ps
+```
+
+All containers should show **Up**.
+
+### Step 6 — Test the full pipeline
+Insert a bad record:
+```bash
+docker exec -it watchman_mysql mysql -uroot -pYour_Root_Password autoquery_db -e \
   "INSERT INTO customers (name, phone) VALUES ('Rohit Sin11', '935684243A');"
 ```
 
-### Step 6 — Watch the Doctor fix it
+Watch all workers process it:
 ```bash
-docker logs -f watchman_doctor
-```
-
-Expected output:
-```
-name:  Rohit Sin11  →  Rohit Singh       ✅ typo fixed by AI
-phone: 935684243A   →  NEEDS_CORRECTION  ⚠️  user must provide correct number
-```
-
-### Step 7 — Watch the Checker validate it
-```bash
-docker logs -f watchman_checker
-```
-
-Expected output:
-```
-🔎 Processing fix_id=fix_3_112843
-   confidence=95% — all checks passed
-🚀 AUTO-APPROVE — written to MySQL ✅
-
-🔎 Processing fix_id=fix_4_113216
-   confidence=72% < threshold 80%
-👤 HUMAN REVIEW required — notification sent 📬
-```
-
-### Step 8 — Watch the Executor write to DB
-```bash
-docker logs -f watchman_executor
-```
-
-Expected output:
-```
-📬 Fix dequeued — record_id=3 approved_by=AUTO confidence=0.95
-📸 Backup triggered → /backups/backup_20260623_194914.sql (42 KB)
-💾 SAVEPOINT created for record id=3
-✏️  UPDATE executed — 1 row(s) affected
-✅ Fix COMMITTED — id=3 fields=['name', 'phone'] values=['Rohit Singh', 'NEEDS_CORRECTION']
+docker logs -f watchman_inspector   # anomaly detected
+docker logs -f watchman_doctor      # fix generated
+docker logs -f watchman_checker     # fix validated
+docker logs -f watchman_executor    # fix written to DB
+docker logs -f watchman_logger      # fix logged to audit table
 ```
 
 ### Dashboards
-| Dashboard | URL |
-|---|---|
-| Inspector (Worker 2) | http://localhost:5500 |
-| Doctor (Worker 3) | http://localhost:5501 |
-| Checker (Worker 4) | http://localhost:5502 |
-| Executor (Worker 5) | http://localhost:5503 |
-| Kafka UI | http://localhost:8080 |
+
+| Dashboard | URL | What you see |
+|---|---|---|
+| Inspector (Worker 2) | http://localhost:5500 | Live anomaly detection feed |
+| Doctor (Worker 3) | http://localhost:5501 | AI fix feed + live DB table |
+| Checker (Worker 4) | http://localhost:5502 | Human approval queue |
+| Executor (Worker 5) | http://localhost:5503 | DB write execution feed |
+| Logger (Worker 6) | http://localhost:5504 | Audit log + stats |
+| Kafka UI | http://localhost:8080 | Kafka topic browser |
+| Audit REST API | http://localhost:8770/docs | Swagger docs |
 
 ---
 
@@ -218,7 +215,7 @@ Consumes every CDC event from Kafka and runs 3 layers of checks on every record.
 - Pandera schema validation for types and ranges
 
 **Layer 2 — AI Check (Groq)**
-- Only fires if Layers 1 & 2 pass
+- Only fires if Layer 1 passes
 - Sends record to Groq `llama-3.3-70b` to flag typos, inconsistencies, suspicious values
 - Returns a JSON array of issue strings
 
@@ -266,7 +263,7 @@ Consumes the same Kafka topic (separate consumer group) and runs a LangGraph pip
 | Step | File | What it does |
 |---|---|---|
 | check_issues | `nodes/check_issues.py` | Re-runs rule + duplicate checks |
-| embed | `issues/embed.py` | Generates 384-dim n-gram hash vector |
+| embed | `issues/embed.py` | Generates n-gram hash vector |
 | search | `issues/search.py` | Finds top-3 similar past fixes in ChromaDB |
 | fixer | `issues/fixer.py` | Asks Groq to generate the fix |
 | validator | `issues/validator.py` | Re-runs rule checks on fixed record |
@@ -278,24 +275,9 @@ Consumes the same Kafka topic (separate consumer group) and runs a LangGraph pip
 |---|---|---|
 | `Rohit Sin11` | `Rohit Singh` | Real name with typo → fixed |
 | `rahul shrma` | `Rahul Sharma` | Real name with typo → fixed |
-| `Priya Patl` | `Priya Patel` | Real name with typo → fixed |
 | `B@d Us3r!` | `UNKNOWN` | Pure garbage → cannot fix |
-| `J0hn!!` | `UNKNOWN` | Pure garbage → cannot fix |
 | `935684243A` | `NEEDS_CORRECTION` | Phone is private → user must correct |
 | `not-a-phone` | `NEEDS_CORRECTION` | Phone is private → user must correct |
-
-### ChromaDB Memory
-Every fix is saved as a vector in ChromaDB. Next time a similar record comes in, the top-3 most similar past fixes are passed to Groq as examples — the system gets smarter with every fix.
-
-Similarity scores after warming up:
-```
-Similar fix — similarity=0.922  ✅
-Similar fix — similarity=0.910  ✅
-```
-
-### Dashboard (port 5501)
-- **Fix Feed tab** — every fix as a card: original record → fixed record side by side, Groq explanation, issues detected
-- **Live Table tab** — full database table updating in real time, FIXED / CLEAN / NEEDS INPUT badges
 
 ### File Structure
 ```
@@ -322,7 +304,7 @@ worker3/
 
 ## ✅ Worker 4 — Checker Agent *(Completed)*
 
-Polls ChromaDB every 10 seconds for new fixes saved by Worker 3. Runs each fix through a 3-layer validation pipeline, then either auto-approves it (high confidence + all checks pass) or routes it to a human manager via Slack/Email notification and a live approval UI.
+Polls ChromaDB every 10 seconds for new fixes saved by Worker 3. Runs each fix through a 3-layer validation pipeline, then either auto-approves it or routes it to a human manager via Slack/Email notification and a live approval UI.
 
 ### Validation Pipeline
 
@@ -335,75 +317,29 @@ Polls ChromaDB every 10 seconds for new fixes saved by Worker 3. Runs each fix t
                                                      push to Redis (W5)       Redis pending + notify
 ```
 
-| Layer | File | What it checks |
-|---|---|---|
-| Layer 1 — JSON Schema | `validators/schema_validator.py` | Fix payload shape — required fields, types, enum values |
-| Layer 2 — Pydantic v2 | `validators/pydantic_models.py` | Field-level value rules — name format, phone regex, id > 0 |
-| Layer 3 — DB dry-run | `validators/db_validator.py` | Attempts a rolled-back INSERT/UPDATE against MySQL to catch constraint violations |
-| Confidence gate | `checker_agent.py` | If confidence ≥ 80% AND layers 1-3 pass → auto-approve. Otherwise → human review |
-
-### Routing Logic
-
-**AUTO-APPROVE path** (confidence ≥ 80%, all validations pass):
-- Fix payload pushed to Redis `approved_fixes` queue for Worker 5 to write
-- Slack notification: "Fix queued for execution ✅"
-- No human involvement needed
-
-**HUMAN REVIEW path** (low confidence OR validation errors):
-- Fix pushed to Redis `watchman:pending` queue
-- Slack + Email alert sent with original → fixed diff and Approve/Reject buttons
-- Fix appears in the approval dashboard (port 5502) in real time
-- Manager clicks **Approve** → fix pushed to `approved_fixes` queue for Worker 5
-- Manager clicks **Reject** → fix discarded, reason logged
-
 ### Approval API (port 8000)
 
 | Method | Endpoint | What it does |
 |---|---|---|
 | `GET` | `/pending` | List all fixes waiting for human decision |
-| `GET` | `/fix/{fix_id}` | Get full payload for a specific fix |
 | `POST` | `/approve/{fix_id}` | Approve a fix → pushed to Worker 5 queue |
 | `POST` | `/reject/{fix_id}` | Reject a fix → moves to rejected queue |
 | `GET` | `/stats` | Queue depth and Redis health |
 | `WS` | `/ws` | Live updates pushed to approval dashboard |
 
-### Dashboard (port 5502)
-- Every pending fix shown as a card: original record → fixed record diff, Groq explanation, issues, validation errors
-- **Approve** and **Reject** buttons on each card — one click, instant action
-- Live status updates via WebSocket — no page refresh needed
-- Sidebar shows pending / auto-approved / approved / rejected counts and auto-approve threshold
-
-### Sample Output
-```
-📦 Found 2 new fix(es) to process.
-
-🔎 Processing fix_id=fix_3_112843
-   op=c confidence=95% fix_valid(W3)=True
-   ✅ Layer 1 passed.   ✅ Layer 2 passed.   ✅ Layer 3 passed.
-   🚀 AUTO-APPROVE — confidence=95% ≥ threshold=80%, all checks passed.
-   ✅ Fix pushed to Redis for Worker 5 — fix_id=fix_3_112843
-
-🔎 Processing fix_id=fix_4_113216
-   op=c confidence=72% fix_valid(W3)=True
-   ✅ Layer 1 passed.   ✅ Layer 2 passed.   ✅ Layer 3 passed.
-   👤 HUMAN REVIEW required — confidence 72% < threshold 80%
-   📬 Notification sent — pending human decision.
-```
-
 ### File Structure
 ```
 worker4/
 ├── checker_agent.py            # Main polling loop + routing logic
-├── checker_dashboard.html      # Manager approval UI (port 5502)
-├── applier.py                  # Legacy direct-write path (used for human approvals)
+├── checker_dashboard.html      # Manager approval UI
 ├── validators/
 │   ├── schema_validator.py     # Layer 1 — JSON Schema
-│   ├── pydantic_models.py      # Layer 2 — Pydantic v2 models
+│   ├── pydantic_models.py      # Layer 2 — Pydantic v2
 │   └── db_validator.py         # Layer 3 — SQLAlchemy dry-run
 ├── approval/
-│   ├── api.py                  # FastAPI — approve/reject endpoints + WebSocket
-│   ├── queue.py                # Redis queue (pending / approved / rejected / executor)
-│   └── notifier.py             # Slack webhook + SMTP email alerts
+│   ├── api.py                  # FastAPI endpoints + WebSocket
+│   ├── queue.py                # Redis queue management
+│   └── notifier.py             # Slack + Email alerts
 ├── requirements.txt
 └── Dockerfile
 ```
@@ -412,7 +348,7 @@ worker4/
 
 ## ✅ Worker 5 — Executor Agent *(Completed)*
 
-The **only worker that permanently writes to MySQL**. Polls the Redis `approved_fixes` queue for fixes approved by Worker 4, takes a mysqldump backup before every batch, then applies each fix inside a SQL transaction with a SAVEPOINT checkpoint. After writing, it reads back the row to verify the data was actually stored correctly. If anything goes wrong at any step, the SAVEPOINT is rolled back — the database is never left in a bad state.
+The **only worker that permanently writes to MySQL**. Polls the Redis `approved_fixes` queue, takes a mysqldump backup, then applies each fix inside a SAVEPOINT transaction with read-back verification.
 
 ### Execution Flow
 
@@ -425,87 +361,21 @@ The **only worker that permanently writes to MySQL**. Polls the Redis `approved_
                                                          COMMIT ✅              ❌
 ```
 
-### Safety Layers
-
-**Layer 1 — Pre-execution backup (mysqldump)**
-Before every Nth fix (configurable via `BACKUP_EVERY_N`, default 10), Worker 5 runs `mysqldump` and saves a full snapshot of the database to `/backups/backup_YYYYMMDD_HHMMSS.sql`. If the dump fails, a warning is logged but execution continues. Old backups are automatically cleaned up — only the last 10 are kept.
-
-**Layer 2 — SAVEPOINT transaction**
-Every write is wrapped in a MySQL SAVEPOINT, not just a regular transaction. Think of it as a video game checkpoint inside the transaction: if the UPDATE or the read-back fails, we roll back only to the savepoint, not the entire session.
-
-**Layer 3 — Read-back verification**
-After the UPDATE, Worker 5 immediately runs a `SELECT` to read the row back and compares every written field against the expected value. If even one field doesn't match what was sent, the SAVEPOINT is rolled back and the result is reported as `ROLLED_BACK`.
-
 ### Result States
 
 | Status | Meaning |
 |---|---|
-| `SUCCESS` | UPDATE executed, read-back matched, SAVEPOINT released, committed to DB |
-| `ROLLED_BACK` | UPDATE ran but read-back mismatched, OR zero rows affected — change undone |
-| `ERROR` | Exception before or during execution, or missing payload fields |
-
-### Redis Queue
-
-Worker 4 pushes approved fixes to the `approved_fixes` Redis list. Worker 5 uses `brpop` (blocking pop) — it waits idle until a fix arrives, then processes it immediately. This means there is zero polling delay.
-
-```python
-# Worker 4 pushes:
-redis.lpush("approved_fixes", json.dumps({
-    "record_id":    5,
-    "table":        "customers",
-    "fixed_record": {"name": "Rohit Singh", "phone": "NEEDS_CORRECTION"},
-    "original":     {"id": 5, "name": "Rohit Sin11", "phone": "935684243A"},
-    "confidence":   0.95,
-    "approved_by":  "AUTO",
-    "explanation":  "Fixed typo in name. Phone is invalid.",
-    "ts":           "14:30:00"
-}))
-
-# Worker 5 picks up with brpop — zero polling delay
-```
-
-### Dashboard (port 5503)
-- Live execution feed — every fix attempt shown as a card: original → applied fields, status badge, confidence, who approved
-- Backup events shown inline with file path and size
-- Sidebar: total executed, success count, rolled back count, errors, auto vs human approvals, last backup path
-- WebSocket connection on port 8768 — updates in real time, auto-reconnects on disconnect
+| `SUCCESS` | UPDATE executed, read-back matched, committed |
+| `ROLLED_BACK` | Read-back mismatch or zero rows affected — change undone |
+| `ERROR` | Exception before or during execution |
 
 ### Sample Output
 ```
-⚡ Executor Agent starting — connecting to Redis …
-✅ Executor ready — polling Redis queue 'redis:approved_fixes'
-   Backup every 10 fix(es) | WebSocket on port 8768
-
-📋 1 fix(es) waiting in queue.
 📬 Fix dequeued — record_id=3 approved_by=AUTO confidence=0.95
-🔧 Processing fix for record id=3 ...
-📸 Backup triggered (every 10 fixes) ...
-✅ Backup complete — /backups/backup_20260623_194914.sql (42 KB)
+📸 Backup triggered → /backups/backup_20260623_194914.sql (42 KB)
 💾 SAVEPOINT created for record id=3
 ✏️  UPDATE executed — 1 row(s) affected
-✅ Fix COMMITTED — id=3 fields=['name', 'phone'] values=['Rohit Singh', 'NEEDS_CORRECTION']
-```
-
-### Tests
-
-Worker 5 ships with a full pytest suite covering all critical paths — no live database required:
-
-| Test | What it covers |
-|---|---|
-| `test_missing_record_id` | Returns `ERROR` when `record_id` is absent |
-| `test_missing_fixed_record` | Returns `ERROR` when `fixed_record` is absent |
-| `test_empty_fixed_record` | Returns `ERROR` for empty `fixed_record` dict |
-| `test_success_with_mock_db` | Mocks SQLAlchemy engine, verifies `SUCCESS` path end-to-end |
-| `test_rollback_on_mismatch` | Simulates read-back mismatch, verifies `ROLLED_BACK` |
-| `test_rollback_on_zero_rows` | Simulates unknown `record_id`, verifies `ROLLED_BACK` |
-| `test_backup_mysqldump_not_found` | Returns clean failure when `mysqldump` is absent |
-| `test_backup_success` | Verifies backup file is created and `success=True` |
-| `test_backup_nonzero_exit` | Returns failure dict when mysqldump exits with error code |
-| `test_clean_old_backups` | Verifies only last N backup files are kept |
-
-Run tests:
-```bash
-pytest worker5/tests/ -v
+✅ Fix COMMITTED — id=3 fields=['name'] values=['Rohit Singh']
 ```
 
 ### File Structure
@@ -514,40 +384,136 @@ worker5/
 ├── executor_agent.py           # Main loop — Redis poll + backup + write + broadcast
 ├── db/
 │   ├── connection.py           # SQLAlchemy engine factory
-│   └── writer.py               # Core write logic — SAVEPOINT + UPDATE + read-back
+│   └── writer.py               # SAVEPOINT + UPDATE + read-back
 ├── redis_queue/
-│   └── redis_consumer.py       # brpop consumer + queue_length helper
+│   └── redis_consumer.py       # brpop consumer
 ├── safety/
-│   └── backup.py               # mysqldump + clean_old_backups
+│   └── backup.py               # mysqldump + cleanup
 ├── dashboard/
-│   └── dashboard.html          # Execution feed dashboard (WebSocket port 8768)
+│   └── dashboard.html          # Execution feed dashboard
 ├── tests/
-│   ├── test_writer.py          # 6 pytest tests for db/writer.py
-│   └── test_backup.py          # 5 pytest tests for safety/backup.py
-├── backups/                    # mysqldump .sql files saved here (host-mounted volume)
+│   ├── test_writer.py          # 6 pytest tests
+│   └── test_backup.py          # 5 pytest tests
 ├── requirements.txt
 └── Dockerfile
 ```
 
-### Requirements
+Run tests:
+```bash
+pytest worker5/tests/ -v
 ```
-sqlalchemy==2.0.30
-pymysql==1.1.0
-redis==5.0.4
-websockets==12.0
-python-dotenv==1.0.1
-pytest==8.2.0
-```
-
-The Dockerfile installs `default-mysql-client` (provides the `mysqldump` binary) alongside the Python dependencies.
 
 ---
 
-## 🔜 Worker 6 — Diary Keeper *(Coming)*
+## ✅ Worker 6 — Logger / Auditor *(Completed)*
 
-Logs every fix permanently in an append-only audit table. Also feeds fixes back into the ChromaDB memory so Worker 3 gets smarter over time.
+Sits at the very end of the pipeline. Every database event captured by Debezium — including the fixes written by Worker 5 — is logged permanently to a MySQL `audit_log` table. The table is append-only: no UPDATE, no DELETE, ever. Worker 6 also feeds every confirmed fix back into ChromaDB so Worker 3 gets smarter with every correction made.
 
-**Planned tech:** MySQL audit table + Python logging + ChromaDB memory update
+### What It Does
+
+**Job 1 — Append-Only Audit Log**
+Every event gets one row in `audit_log` containing: original record, fixed record, issues found, confidence score, who approved it (auto or human email), and timestamp. SQLAlchemy ORM guards block any UPDATE or DELETE at the code level — the audit trail cannot be tampered with.
+
+**Job 2 — ChromaDB Self-Learning**
+Every confirmed fix (confidence ≥ 0.7 or fix_valid=True) is upserted into the same ChromaDB collection that Worker 3 reads from. The more fixes happen → the more similar examples Worker 3 has → the better future fixes become. This is the self-learning loop.
+
+**Job 3 — REST API + Live Dashboard**
+FastAPI on port 8770 exposes the audit log for external queries. The live dashboard on port 5504 shows every fix event in real time via WebSocket.
+
+### Pipeline (LangGraph)
+```
+[ingest] → [audit] → [memory] → [reporter] → [broadcast]
+```
+
+| Step | File | What it does |
+|---|---|---|
+| ingest | `nodes/ingest_node.py` | Parse and normalize the raw CDC event |
+| audit | `nodes/audit_node.py` | Write one row to audit_log (MySQL) |
+| memory | `nodes/memory_node.py` | Upsert fix pair into ChromaDB |
+| reporter | `nodes/reporter_node.py` | Build stats + dashboard payload |
+| broadcast | `nodes/broadcast_node.py` | Push to WebSocket clients |
+
+### Audit REST API (port 8770)
+
+| Method | Endpoint | What it returns |
+|---|---|---|
+| `GET` | `/api/v1/audit` | Last 100 audit log rows |
+| `GET` | `/api/v1/stats` | Total events, fix rate, avg confidence, op breakdown |
+| `GET` | `/api/v1/report` | Full human-readable report with narrative |
+| `GET` | `/api/v1/memory` | ChromaDB memory bank size |
+| `GET` | `/health` | Container health check |
+
+Swagger docs → http://localhost:8770/docs
+
+### audit_log Table Schema
+
+```sql
+CREATE TABLE audit_log (
+    id           INT AUTO_INCREMENT PRIMARY KEY,
+    worker       VARCHAR(20)  NOT NULL DEFAULT 'worker5',
+    op           VARCHAR(10)  NOT NULL,
+    record_id    INT,
+    original     TEXT,                    -- JSON: bad record
+    fixed        TEXT,                    -- JSON: corrected record
+    issues       TEXT,                    -- JSON: list of issues found
+    confidence   FLOAT,
+    fix_valid    TINYINT(1),
+    approved_by  VARCHAR(100),            -- 'auto' or email address
+    explanation  TEXT,
+    ts           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+```
+
+### Dashboard (port 5504)
+- Live audit feed — every event shown as a card with original → fixed diff
+- Stats row — total logged, valid fixes, invalid fixes, avg confidence, memory entries
+- Sidebar — fix rate, auto vs human approved, issue type breakdown
+- API quick links — one click to open any REST endpoint
+
+### Sample Output
+```
+✅ MySQL connected on attempt 1.
+✅ audit_log table ready.
+🧠 ChromaDB ready — 21 fix(es) in memory.
+🌐 Logger WebSocket on ws://0.0.0.0:8769
+🌐 FastAPI audit API on http://0.0.0.0:8770
+✅ Logger Agent ready — listening for events …
+
+📥 Logger received [U] — record_id=3
+  💾 Audit row saved — id=14 op=u record_id=3 confidence=0.95
+  🧠 Memory updated — fix_id=w6_fix_3_143001 total=22
+  📡 Dashboard broadcast sent.
+  ✅ Pipeline complete — audit_id=14 memory=True
+```
+
+### File Structure
+```
+worker6/
+├── logger_agent.py             # Entry point — Kafka consumer + WS + FastAPI
+├── pipeline.py                 # LangGraph state machine
+├── config.py                   # All env vars and constants
+├── nodes/
+│   ├── ingest_node.py          # Parse raw CDC event
+│   ├── audit_node.py           # Write to audit_log
+│   ├── memory_node.py          # Update ChromaDB
+│   ├── reporter_node.py        # Build stats payload
+│   └── broadcast_node.py       # Push to dashboard
+├── services/
+│   ├── audit_writer.py         # SQLAlchemy audit_log writer
+│   ├── memory_writer.py        # ChromaDB upsert
+│   └── report_builder.py       # Stats aggregation + narrative
+├── models/
+│   ├── audit_log.py            # SQLAlchemy model (append-only guards)
+│   └── db_setup.py             # create_all() on startup
+├── api/
+│   ├── app.py                  # FastAPI app + CORS
+│   └── routes.py               # /audit /stats /report /memory endpoints
+├── dashboard/
+│   ├── dashboard.html          # Live audit dashboard
+│   └── nginx.conf              # Nginx config
+├── requirements.txt
+└── Dockerfile
+```
 
 ---
 
@@ -557,4 +523,12 @@ Logs every fix permanently in an append-only audit table. Also feeds fixes back 
 - Zero polling — pure event-driven CDC architecture
 - AI that gets smarter with every fix it makes
 - Human in the loop for sensitive data corrections
-- Full audit trail of every change ever made
+- Full append-only audit trail of every change ever made
+- Complete observability — every worker has its own live dashboard
+
+---
+
+## 👨‍💻 Author
+
+**Rohit Kumar**
+GitHub → https://github.com/RohitKumar186
